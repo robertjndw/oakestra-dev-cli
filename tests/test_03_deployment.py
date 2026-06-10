@@ -10,10 +10,8 @@ import pytest
 from helpers import (
     assert_not_failed,
     build_microservice,
-    build_sla,
     get_service,
-    json_body,
-    object_id,
+    register_app,
     running_instances,
     wait_until,
 )
@@ -25,26 +23,8 @@ pytestmark = pytest.mark.deployment
 def app(root_api, active_cluster):
     """Register a test application with one nginx microservice, clean up after."""
     app_name = f"e2e{int(time.time()) % 1000000}"
-    sla = build_sla(app_name, [build_microservice("nginx")])
-
-    resp = root_api.post("/api/application/", json=sla)
-    assert resp.status_code == 200, f"app registration failed: {resp.text}"
-
-    # The endpoint returns all apps of the user - find ours by name
-    apps = json_body(resp)
-    created = next((a for a in apps if a.get("application_name") == app_name), None)
-    assert created is not None, f"app {app_name} not in response: {apps}"
-    app_id = created.get("applicationID") or object_id(created)
-
-    try:
-        services_resp = root_api.get(f"/api/services/{app_id}")
-        assert services_resp.status_code == 200, services_resp.text
-        services = json_body(services_resp)
-        assert len(services) == 1, f"expected 1 service, got: {services}"
-        service_id = services[0].get("microserviceID") or object_id(services[0])
-    except Exception:
-        root_api.delete(f"/api/application/{app_id}")
-        raise
+    app_id, service_ids = register_app(root_api, app_name, [build_microservice("nginx")])
+    service_id = service_ids["nginx"]
 
     yield {"id": app_id, "name": app_name, "service_id": service_id}
 

@@ -5,10 +5,9 @@ import time
 
 import requests
 
-# Statuses that mean the platform gave up on a deployment - polling further
-# is pointless. Mirrors NegativeSchedulingStatus / DeploymentStatus in
-# oakestra's oakestra_utils library.
-FAILURE_STATUSES = {
+# Statuses the scheduler uses to reject a job (mirrors
+# NegativeSchedulingStatus in oakestra's oakestra_utils library).
+NEGATIVE_SCHEDULING_STATUSES = {
     "TargetClusterNotFound",
     "TargetClusterNotActive",
     "TargetClusterNoCapacity",
@@ -16,9 +15,11 @@ FAILURE_STATUSES = {
     "NO_WORKER_CAPACITY",
     "NO_QUALIFIED_WORKER_FOUND",
     "NO_NODE_FOUND",
-    "FAILED",
-    "DEAD",
 }
+
+# All statuses that mean the platform gave up on a deployment - polling
+# further is pointless.
+FAILURE_STATUSES = NEGATIVE_SCHEDULING_STATUSES | {"FAILED", "DEAD"}
 
 
 class TimeoutExpired(AssertionError):
@@ -134,15 +135,22 @@ def build_sla(app_name, microservices):
     }
 
 
-def build_microservice(name, image="docker.io/library/nginx:latest", cmd=None):
+def build_microservice(
+    name,
+    image="docker.io/library/nginx:latest",
+    cmd=None,
+    memory=100,
+    addresses=None,
+    one_shot=False,
+):
     """Build a minimal container microservice for an SLA document."""
-    return {
+    microservice = {
         "microserviceID": "",
         "microservice_name": name,
         "microservice_namespace": "test",
         "virtualization": "container",
         "cmd": cmd or [],
-        "memory": 100,
+        "memory": memory,
         "vcpus": 1,
         "vgpus": 0,
         "vtpus": 0,
@@ -152,9 +160,53 @@ def build_microservice(name, image="docker.io/library/nginx:latest", cmd=None):
         "code": image,
         "state": "",
         "port": "",
+        "one_shot": one_shot,
         "added_files": [],
         "constraints": [],
     }
+    if addresses is not None:
+        microservice["addresses"] = addresses
+    return microservice
+
+
+def register_app(client, app_name, microservices):
+    """Register an application, return (app_id, {microservice_name: service_id}).
+
+    Deletes the half-created application again if anything fails after
+    registration, so tests do not leak state into later runs.
+    """
+    resp = client.post("/api/application/", json=build_sla(app_name, microservices))
+    assert resp.status_code == 200, f"app registration failed: {resp.text}"
+
+    # The endpoint returns all apps of the user - find ours by name
+    apps = json_body(resp)
+    created = next((a for a in apps if a.get("application_name") == app_name), None)
+    assert created is not None, f"app {app_name} not in response: {apps}"
+    app_id = created.get("applicationID") or object_id(created)
+
+    try:
+        services_resp = client.get(f"/api/services/{app_id}")
+        assert services_resp.status_code == 200, services_resp.text
+        services = json_body(services_resp)
+        assert len(services) == len(microservices), f"expected services, got: {services}"
+        service_ids = {
+            s.get("microservice_name"): (s.get("microserviceID") or object_id(s))
+            for s in services
+        }
+    except Exception:
+        client.delete(f"/api/application/{app_id}")
+        raise
+
+    return app_id, service_ids
+
+
+def undeploy_all_instances(client, service_id):
+    """Best-effort undeploy of every instance of a service (for cleanup)."""
+    job = get_service(client, service_id)
+    if job is None:
+        return
+    for instance in job.get("instance_list") or []:
+        client.delete(f"/api/service/{service_id}/instance/{instance.get('instance_number')}")
 
 
 def get_service(client, service_id):

@@ -1,10 +1,40 @@
-# Single-network fix: upstream wires ROOT_SERVICE_MANAGER_URL to
-# ${SYSTEM_MANAGER_URL}, which in a multi-machine setup is the root host IP
-# where port 10099 is published. Here all containers share one Docker network,
-# and the name 'system_manager' resolves to the system_manager container,
-# which does not serve 10099. Point directly at the root_service_manager
-# container instead.
+# Single-network fixes for the cluster service manager.
+#
+# Upstream assumes cluster_manager and cluster_service_manager share one host
+# IP: system_manager registers the cluster's net address from cluster_manager's
+# gRPC peer IP, and root_service_manager then authorizes the cluster service
+# manager's table-query calls by comparing their source IP against that
+# registration. On a shared Docker network every container has its own IP, so
+# those calls always fail with 400 'Invalid cluster address'.
+#
+# Emulate the single-host topology by running cluster_service_manager inside
+# cluster_manager's network namespace - both then share one IP, matching the
+# upstream assumption. Its port (10110) is published via cluster_manager.
+#
+# The image is also pinned to the same oakestra-net version as the worker's
+# NetManager binary - the upstream ':latest' tag can drift and break the net
+# API between components.
 services:
+  cluster_manager:
+    environment:
+      - CLUSTER_SERVICE_MANAGER_ADDR=localhost
+    ports:
+      - "10110:10110"
+    # Drop the upstream dependency on cluster_service_manager: it now lives
+    # inside cluster_manager's netns and must start AFTER it, not before.
+    depends_on: !override
+      - mongo_cluster
+      - mqtt
+      - cluster_scheduler
+
   cluster_service_manager:
+    image: ghcr.io/oakestra/oakestra-net/cluster-service-manager:${NETMANAGER_VERSION:-alpha-v0.4.411}
+    network_mode: "service:cluster_manager"
+    hostname: !reset null
+    ports: !reset []
+    expose: !reset []
     environment:
       - ROOT_SERVICE_MANAGER_URL=root_service_manager
+    depends_on:
+      cluster_manager:
+        condition: service_started

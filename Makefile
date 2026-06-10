@@ -39,7 +39,8 @@ ROOT_COMPOSE := docker compose \
     -f $(OAKESTRA_REPO)/root_orchestrator/override-no-addons.yml \
     -f $(OAKESTRA_REPO)/root_orchestrator/override-no-observe.yml \
     -f $(OAKESTRA_REPO)/root_orchestrator/override-no-dashboard.yml \
-    -f compose/override-root-mongo.yml
+    -f compose/override-root-mongo.yml \
+    -f compose/override-root-servicemanager.yml
 
 CLUSTER_COMPOSE := docker compose \
     -f $(OAKESTRA_REPO)/cluster_orchestrator/docker-compose.yml \

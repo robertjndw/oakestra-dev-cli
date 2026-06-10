@@ -47,7 +47,10 @@ Three separate compose projects join one shared Docker network named `oakestra`,
 ### Why the local overrides exist (do not remove casually)
 
 - `override-*-mongo.yml`: upstream pins `mongo:8.0`, which refuses to start on Linux kernel 6.19+ (OrbStack ships newer). Pinned to 8.2 here.
-- `override-cluster-servicemanager.yml`: upstream wires `ROOT_SERVICE_MANAGER_URL=${SYSTEM_MANAGER_URL}`, correct for IP-based multi-machine setups but wrong on a shared container network ('system_manager' resolves to the wrong container, which does not serve port 10099). Without this, worker subnet requests silently fail and NodeEngine crashloops on NetManager registration.
+- `override-cluster-servicemanager.yml` fixes two shared-network breakages:
+  1. Upstream wires `ROOT_SERVICE_MANAGER_URL=${SYSTEM_MANAGER_URL}`, correct for IP-based multi-machine setups but wrong here ('system_manager' resolves to the wrong container, which does not serve port 10099). Without the fix, worker subnet requests silently fail and NodeEngine crashloops on NetManager registration.
+  2. cluster_service_manager runs with `network_mode: "service:cluster_manager"` (one shared IP). The root net plugin authorizes the cluster's table-query calls by source IP, against the address captured from cluster_manager's gRPC handshake. With per-container IPs those calls get 400 'Invalid cluster address' and ALL overlay traffic silently times out while deployments still look RUNNING. Consequences of the shared netns: cluster_manager reaches the service manager via `CLUSTER_SERVICE_MANAGER_ADDR=localhost`, port 10110 is published on cluster_manager, and the upstream `cluster_manager -> cluster_service_manager` depends_on is inverted with `!override`.
+- `override-*-servicemanager.yml` also pin both service manager images to `NETMANAGER_VERSION` instead of `:latest`, keeping all three oakestra-net components on the same release as the worker's NetManager binary.
 
 ### Worker container internals (`worker/docker-entrypoint.sh`)
 
@@ -63,7 +66,8 @@ Startup order is load-bearing:
 
 ### Test suite (`tests/`)
 
-- Files run in order: `test_01_health` → `test_02_registration` → `test_03_deployment`. The deployment tests share one module-scoped app fixture and intentionally mutate shared state in sequence (deploy → scale up → scale down → undeploy/delete).
+- Files run in order: `test_01_health` → `test_02_registration` → `test_03_deployment` → `test_04_network` → `test_05_failures`. The deployment and network tests share module-scoped app fixtures and intentionally mutate shared state in sequence (deploy → scale → undeploy/delete; web before client).
+- `test_04_network` proves the overlay data plane: it requests a fixed RR service IP in the SLA (`10.30.30.30`) and uses a `one_shot` busybox client whose exit code becomes the verdict (exit 0 → NodeEngine reports `COMPLETED`). `test_05_failures` expects failure statuses, so it deliberately does NOT use `assert_not_failed`.
 - `wait_until` (helpers.py) retries all exceptions EXCEPT `AssertionError`, which propagates immediately - that is the fail-fast contract used by `assert_not_failed` to abort polling when a job hits a terminal status. Keep that distinction when adding checks.
 - `json_body` unwraps double-encoded responses: several system_manager endpoints return `json_util.dumps(...)` through flask-smorest, producing a JSON string containing JSON. Use it for any new API call.
 - `ApiClient` re-logs-in on 401 (JWT expires after ~15 min).

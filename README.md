@@ -41,6 +41,8 @@ make test-smoke    # health + registration only, skips deployments
 | `tests/test_01_health.py` | system_manager and cluster_manager answer HTTP, Swagger docs are served, Admin login returns a JWT |
 | `tests/test_02_registration.py` | the cluster registers at the root and turns active, the worker attaches, aggregated cpu/memory resources reach the root |
 | `tests/test_03_deployment.py` | SLA registration, instance deployment to `RUNNING`, scale up to 2 instances, scale down to 1, undeploy, application deletion |
+| `tests/test_04_network.py` | overlay data plane: a one-shot client container wgets an nginx service via its round-robin service IP (10.30.0.0/16) and must exit 0 (`COMPLETED`) |
+| `tests/test_05_failures.py` | negative paths: a 10TB-memory request is rejected with a capacity status, an unpullable image surfaces as `FAILED` with a status detail |
 
 The deployment tests deploy a real nginx container inside the dockerized
 worker (via the worker's own containerd), so a green run means the entire
@@ -77,6 +79,13 @@ context, so whatever you have on disk is what gets tested.
   upstream refuse to start on Linux kernel 6.19+
   ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)), which is
   what OrbStack and recent Docker Desktop VMs ship.
+- `compose/override-*-servicemanager.yml` adapt the oakestra-net components to
+  the shared-network topology: the cluster service manager runs inside
+  cluster_manager's network namespace (upstream authorizes its calls to the
+  root by source IP, assuming both cluster services share one host IP), it
+  points at `root_service_manager` directly instead of the host IP, and both
+  service manager images are pinned to the same oakestra-net release as the
+  worker's NetManager binary.
 - All compose projects join one shared Docker network named `oakestra`, so
   containers resolve each other by name (`system_manager`, `cluster_manager`,
   `mqtt`) - no IP configuration needed.

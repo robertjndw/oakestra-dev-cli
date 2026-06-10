@@ -1,0 +1,8 @@
+# Pin the root service manager to the same oakestra-net version as the
+# worker's NetManager binary (NETMANAGER_VERSION, exported by the Makefile).
+# The upstream compose uses ':latest', which can drift from the alpha
+# releases and break the net API between components (e.g. the cluster's
+# instance-resolution calls getting 400s).
+services:
+  root_service_manager:
+    image: ghcr.io/oakestra/oakestra-net/root-service-manager:${NETMANAGER_VERSION:-alpha-v0.4.411}
