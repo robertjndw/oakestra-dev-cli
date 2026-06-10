@@ -1,0 +1,8 @@
+# macOS/OrbStack workaround: MongoDB 8.0 refuses to start on Linux kernel
+# 6.19+ (https://jira.mongodb.org/browse/SERVER-121912), and OrbStack ships a
+# newer kernel. Pin the cluster mongo containers to 8.2, which has the fix.
+services:
+  mongo_cluster:
+    image: mongo:8.2
+  mongo_clusternet:
+    image: mongo:8.2

@@ -1,0 +1,33 @@
+# Dockerized Oakestra worker (DinD). Runs as its own compose project but
+# joins the shared 'oakestra' network created by the cluster stack, so
+# 'cluster_manager' and 'mqtt' resolve by container name.
+#
+# OAKESTRA_REPO and NETMANAGER_VERSION are exported by the Makefile.
+name: oakestra-worker
+
+services:
+  worker:
+    build:
+      context: ../worker
+      additional_contexts:
+        oakestra-src: ${OAKESTRA_REPO:?path to local oakestra checkout}/go_node_engine
+      args:
+        NETMANAGER_VERSION: ${NETMANAGER_VERSION:-v0.4.411}
+    image: oakestra_worker_local
+    privileged: true
+    restart: unless-stopped
+    volumes:
+      # Anonymous volume so containerd's data dir is a real filesystem -
+      # overlayfs snapshots cannot be created on top of the container's own
+      # overlayfs (rootfs mounts fail with 'invalid argument').
+      - /var/lib/containerd
+    environment:
+      - CLUSTER_ADDRESS=cluster_manager
+      - CLUSTER_PORT=10100
+      - MQTT_URL=mqtt
+      - MQTT_PORT=10003
+
+networks:
+  default:
+    name: oakestra
+    external: true

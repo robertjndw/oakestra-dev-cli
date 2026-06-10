@@ -1,0 +1,10 @@
+# Single-network fix: upstream wires ROOT_SERVICE_MANAGER_URL to
+# ${SYSTEM_MANAGER_URL}, which in a multi-machine setup is the root host IP
+# where port 10099 is published. Here all containers share one Docker network,
+# and the name 'system_manager' resolves to the system_manager container,
+# which does not serve 10099. Point directly at the root_service_manager
+# container instead.
+services:
+  cluster_service_manager:
+    environment:
+      - ROOT_SERVICE_MANAGER_URL=root_service_manager
