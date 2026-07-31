@@ -25,6 +25,10 @@ export OAKESTRA_REPO
 
 # Defaults - work as-is for a single-machine setup
 export SYSTEM_MANAGER_URL    ?= system_manager
+# Address the root orchestrator uses to reach cluster_manager back; without it
+# cluster_manager crashloops on registration ("CLUSTER_ADDRESS env var is not
+# set"). Container name resolves via the shared Docker network.
+export CLUSTER_ADDRESS       ?= cluster_manager
 export CLUSTER_NAME          ?= test-cluster
 export CLUSTER_LOCATION      ?= 52.5200,13.4050,100
 export LIB_BRANCH            ?= develop
