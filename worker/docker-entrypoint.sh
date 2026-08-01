@@ -98,4 +98,27 @@ if [ ! -S /etc/netmanager/netmanager.sock ]; then
 fi
 echo "[oakestra] NetManager ready."
 
-exec nodeengined
+# Supervised rather than exec'd: `oak-dev worker reload` sends nodeengined a
+# TERM (docker compose exec worker pkill nodeengined) to pick up a freshly
+# cross-compiled binary from the /oak-bin mount (see compose/override-live-
+# worker.yml) without recreating this container. Recreating would mint a new
+# node ID on the next cluster handshake and strand any scheduled instances in
+# NODE_SCHEDULED forever (see CLAUDE.md). The trap below still lets a normal
+# `docker compose stop`/`down` (SIGTERM to PID 1) shut down promptly.
+trap 'kill -TERM "$NE_PID" 2>/dev/null; wait "$NE_PID" 2>/dev/null; exit 0' TERM INT
+
+# `oak-dev debug nodeengine` sets OAK_DEV_DEBUG=1 (see
+# compose/override-debug-worker.yml) to run the daemon under Delve instead of
+# directly - everything above (containerd, NetManager, port forwarding) still
+# needs to happen first, so this can't just be a different compose entrypoint.
+while true; do
+    if [ -n "${OAK_DEV_DEBUG:-}" ]; then
+        dlv exec --headless --listen=:2345 --api-version=2 --accept-multiclient --continue /oak-bin/nodeengined &
+    else
+        nodeengined &
+    fi
+    NE_PID=$!
+    wait "$NE_PID"
+    echo "[oakestra] nodeengined exited (code $?) - relaunching"
+    sleep 1
+done

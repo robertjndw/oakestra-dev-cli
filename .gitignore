@@ -1,4 +1,6 @@
 .env
+oak-dev.yaml
+.generated/
 .venv/
 __pycache__/
 *.pyc

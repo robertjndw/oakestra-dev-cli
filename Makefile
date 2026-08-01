@@ -1,184 +1,65 @@
 # ─── Oakestra local testing on macOS ─────────────────────────────────────────
-# Runs the root + cluster orchestrators from a local oakestra checkout and a
-# dockerized worker node, then exercises the whole stack with an E2E test
-# suite. All stacks share the 'oakestra' Docker network, so service hostnames
-# resolve across compose projects without any IP configuration.
+# Everything about running, editing and testing the stack lives in the oak-dev
+# CLI - `oak-dev --help` is the source of truth. This Makefile only covers the
+# two things oak-dev can't do for itself: installing oak-dev, and driving the
+# OrbStack VM used as a *real* (systemd-managed) worker node.
 #
 # Quickstart:
-#   cp .env.example .env   # once, edit as needed
-#   make e2e               # build + start everything + run the test suite
-#
-# Day-to-day:
-#   make up                # start root + cluster + dockerized worker
-#   make test              # run the E2E suite against the running stack
-#   make rebuild s=system_manager
-#   make down
+#   make install                          # puts oak-dev on your PATH
+#   cp .env.example .env                  # once, edit as needed
+#   cp oak-dev.yaml.example oak-dev.yaml  # once, pick live: components + stack
+#   oak-dev doctor --fix                  # prerequisites + bootstrap
+#   oak-dev dev                           # start everything, watch, stream logs
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Load local overrides (.env is gitignored)
+# Load local overrides (.env is gitignored) - oak-dev reads this itself, but the
+# vm-* targets below shell out to orbctl directly and need it here too.
 -include .env
 
-# Path to the local oakestra checkout (sibling directory by default)
 OAKESTRA_REPO ?= ../oakestra
 override OAKESTRA_REPO := $(abspath $(OAKESTRA_REPO))
 export OAKESTRA_REPO
 
-# Defaults - work as-is for a single-machine setup
-export SYSTEM_MANAGER_URL    ?= system_manager
-# Address the root orchestrator uses to reach cluster_manager back; without it
-# cluster_manager crashloops on registration ("CLUSTER_ADDRESS env var is not
-# set"). Container name resolves via the shared Docker network.
-export CLUSTER_ADDRESS       ?= cluster_manager
-export CLUSTER_NAME          ?= test-cluster
-export CLUSTER_LOCATION      ?= 52.5200,13.4050,100
-export LIB_BRANCH            ?= develop
-# NetManager release baked into the dockerized worker. version.txt on develop
-# tracks the next release, which only exists as an 'alpha-' tag in oakestra-net.
-export NETMANAGER_VERSION    ?= alpha-$(shell cat $(OAKESTRA_REPO)/version.txt 2>/dev/null || echo v0.4.411)
+# Where `make install` puts the binary. Override if you keep tools elsewhere:
+#   make install PREFIX=/usr/local/bin
+PREFIX ?= $(HOME)/.local/bin
 
-# ── Compose command definitions ───────────────────────────────────────────────
-# Lean config: no addons, no observability stack, no dashboard
-ROOT_COMPOSE := docker compose \
-    -f $(OAKESTRA_REPO)/root_orchestrator/docker-compose.yml \
-    -f $(OAKESTRA_REPO)/root_orchestrator/override-no-addons.yml \
-    -f $(OAKESTRA_REPO)/root_orchestrator/override-no-observe.yml \
-    -f $(OAKESTRA_REPO)/root_orchestrator/override-no-dashboard.yml \
-    -f compose/override-root-mongo.yml \
-    -f compose/override-root-servicemanager.yml
-
-CLUSTER_COMPOSE := docker compose \
-    -f $(OAKESTRA_REPO)/cluster_orchestrator/docker-compose.yml \
-    -f $(OAKESTRA_REPO)/cluster_orchestrator/override-no-addons.yml \
-    -f $(OAKESTRA_REPO)/cluster_orchestrator/override-no-observe.yml \
-    -f compose/override-cluster-mongo.yml \
-    -f compose/override-cluster-servicemanager.yml
-
-# Optional: uncomment to build oakestra-net from local source instead of GHCR images
-# ROOT_COMPOSE    += -f $(OAKESTRA_REPO)/root_orchestrator/override-local-service-manager.yml
-# CLUSTER_COMPOSE += -f $(OAKESTRA_REPO)/cluster_orchestrator/override-local-service-manager.yml
-
-WORKER_COMPOSE := docker compose -f compose/worker.yml
-
-# Test suite
-VENV   := .venv
-PYTEST := $(VENV)/bin/pytest
-
-# Name of the OrbStack Linux VM used as a real worker node (override via env or .env)
+# Name of the OrbStack Linux VM used as a real worker node (override via .env)
 WORKER_VM ?= oak-worker
 
 # Translate Mac arch to Go/Linux arch (arm64 stays arm64; x86_64 → amd64)
 GOARCH := $(shell uname -m | sed 's/x86_64/amd64/')
 
-.PHONY: help check-repo up down up-root up-cluster down-root down-cluster \
-        logs-root logs-cluster log status open clean \
-        rebuild rebuild-cluster rebuild-scheduler restart \
-        worker-up worker-down worker-logs worker-shell worker-scale \
-        venv test test-smoke e2e \
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+.PHONY: help install build \
         vm-build vm-create vm-create-local vm-rebuild vm-up vm-down \
         vm-logs vm-shell vm-delete
 
-help: ## Show available targets
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-	    | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+help: ## Show this help (everything else: oak-dev --help)
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
+	    | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "  Everything else is oak-dev: run 'oak-dev --help'."
 
-check-repo:
-	@[ -f "$(OAKESTRA_REPO)/version.txt" ] \
-	    || (echo "ERROR: no oakestra checkout at $(OAKESTRA_REPO) - set OAKESTRA_REPO in .env"; exit 1)
+# ── Installing oak-dev ────────────────────────────────────────────────────────
 
-# ── Orchestrator stacks ───────────────────────────────────────────────────────
+install: ## Build oak-dev and put it on your PATH (PREFIX=~/.local/bin)
+	@mkdir -p $(PREFIX)
+	go build -ldflags "-X main.version=$(VERSION)" -o $(PREFIX)/oak-dev ./cmd/oak-dev
+	@echo "Installed $(PREFIX)/oak-dev ($(VERSION))"
+	@command -v oak-dev >/dev/null 2>&1 \
+	    || echo "NOTE: $(PREFIX) is not on your PATH - add it to use 'oak-dev' directly."
+	@echo "Shell completion: oak-dev completion --help"
 
-up: check-repo up-root up-cluster worker-up ## Build + start root, cluster, and dockerized worker
-
-down: worker-down down-cluster down-root ## Stop everything
-
-up-root: check-repo ## Start root orchestrator
-	$(ROOT_COMPOSE) up -d --build
-
-up-cluster: check-repo ## Start cluster orchestrator
-	$(CLUSTER_COMPOSE) up -d --build
-
-down-root:
-	$(ROOT_COMPOSE) down
-
-down-cluster:
-	$(CLUSTER_COMPOSE) down
-
-# ── Dockerized worker ─────────────────────────────────────────────────────────
-
-worker-up: check-repo ## Build + start the dockerized worker (DinD)
-	$(WORKER_COMPOSE) up -d --build
-
-worker-down: ## Stop the dockerized worker
-	$(WORKER_COMPOSE) down -v
-
-worker-scale: ## Run multiple workers: make worker-scale n=3
-	@[ -n "$(n)" ] || (echo "Usage: make worker-scale n=<count>"; exit 1)
-	$(WORKER_COMPOSE) up -d --build --scale worker=$(n)
-
-worker-logs: ## Tail dockerized worker logs
-	$(WORKER_COMPOSE) logs -f --tail=100
-
-worker-shell: ## Shell into the dockerized worker
-	$(WORKER_COMPOSE) exec worker bash
-
-# ── Test suite ────────────────────────────────────────────────────────────────
-
-venv: $(VENV)/bin/activate ## Create the test virtualenv
-
-$(VENV)/bin/activate: tests/requirements.txt
-	python3 -m venv $(VENV)
-	$(VENV)/bin/pip install --quiet -r tests/requirements.txt
-	@touch $(VENV)/bin/activate
-
-test: venv ## Run the full E2E suite against the running stack
-	$(PYTEST) tests/ -v
-
-test-smoke: venv ## Run only health + registration tests (no deployment)
-	$(PYTEST) tests/ -v -m "not deployment"
-
-e2e: up test ## Start everything and run the full E2E suite
-
-# ── Logs / status ─────────────────────────────────────────────────────────────
-
-logs-root: ## Tail root orchestrator logs
-	$(ROOT_COMPOSE) logs -f --tail=50
-
-logs-cluster: ## Tail cluster orchestrator logs
-	$(CLUSTER_COMPOSE) logs -f --tail=50
-
-log: ## Follow a single container: make log s=system_manager
-	@[ -n "$(s)" ] || (echo "Usage: make log s=<container_name>"; exit 1)
-	docker logs -f --tail=100 $(s)
-
-status: ## Show running Oakestra containers and their ports
-	@docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" \
-	    | grep -E "^NAMES|system_manager|cluster_manager|root_|cluster_|mongo|redis|mqtt|scheduler|abstractor|jwt|worker"
-
-# ── Rebuild after code changes ────────────────────────────────────────────────
-
-rebuild: ## Rebuild + restart a root service: make rebuild s=system_manager
-	@[ -n "$(s)" ] || (echo "Usage: make rebuild s=<service>"; exit 1)
-	$(ROOT_COMPOSE) build $(s)
-	$(ROOT_COMPOSE) up -d $(s)
-
-rebuild-cluster: ## Rebuild + restart a cluster service: make rebuild-cluster s=cluster_manager
-	@[ -n "$(s)" ] || (echo "Usage: make rebuild-cluster s=<service>"; exit 1)
-	$(CLUSTER_COMPOSE) build $(s)
-	$(CLUSTER_COMPOSE) up -d $(s)
-
-rebuild-scheduler: ## Rebuild root + cluster scheduler (shared Go source)
-	$(ROOT_COMPOSE) build root_scheduler && $(ROOT_COMPOSE) up -d root_scheduler
-	$(CLUSTER_COMPOSE) build cluster_scheduler && $(CLUSTER_COMPOSE) up -d cluster_scheduler
-
-restart: ## Restart a container without rebuild: make restart s=system_manager
-	@[ -n "$(s)" ] || (echo "Usage: make restart s=<container_name>"; exit 1)
-	docker restart $(s)
+build: ## Build oak-dev into ./bin without installing it
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/oak-dev ./cmd/oak-dev
+	@echo "Built bin/oak-dev ($(VERSION))"
 
 # ── Real worker node (OrbStack VM) ────────────────────────────────────────────
-# The dockerized worker covers most testing. Use an OrbStack Linux VM when you
-# need a real systemd-managed NodeEngine (e.g. testing the installer or
-# host-level behavior). From inside an OrbStack VM, 'host.orb.internal'
-# resolves to the Mac - no manual IP detection needed.
+# Kept as raw Make, unchanged: macOS-only, for testing the real installer and
+# systemd units. Not part of the oak-dev rewrite - see "explicitly out of
+# scope" in the design doc.
 
 vm-create: ## One-time: create the OrbStack VM and install the released NodeEngine
 	@orbctl info $(WORKER_VM) >/dev/null 2>&1 \
@@ -197,7 +78,9 @@ vm-create: ## One-time: create the OrbStack VM and install the released NodeEngi
 	@echo ""
 	@echo "Done. Run 'make vm-up' to start the worker."
 
-vm-build: check-repo ## Cross-compile NodeEngine + nodeengined for the VM (output: build/)
+vm-build: ## Cross-compile NodeEngine + nodeengined for the VM (output: build/)
+	@[ -f "$(OAKESTRA_REPO)/version.txt" ] \
+	    || (echo "ERROR: no oakestra checkout at $(OAKESTRA_REPO) - set OAKESTRA_REPO in .env"; exit 1)
 	@echo "Building for linux/$(GOARCH)..."
 	@cd $(OAKESTRA_REPO)/go_node_engine && \
 	    CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go build \
@@ -264,14 +147,4 @@ vm-delete: ## Delete the worker VM entirely (destructive)
 	    && read ans && [ "$${ans:-N}" = "y" ]
 	orbctl delete $(WORKER_VM)
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
 
-open: ## Open the API docs in the browser
-	open "http://localhost:10000/api/docs"
-
-clean: ## Remove containers AND data volumes - fresh start
-	@printf "This deletes all Oakestra volumes (MongoDB, Redis). Continue? [y/N] " \
-	    && read ans && [ "$${ans:-N}" = "y" ]
-	$(WORKER_COMPOSE) down -v
-	$(CLUSTER_COMPOSE) down -v
-	$(ROOT_COMPOSE) down -v

@@ -1,0 +1,8 @@
+# Phase 1a live-mount for cluster_manager - see override-live-system_manager.yml.
+# Same proto/*_pb2.py blocker: run `oak-dev protoc` first.
+services:
+  cluster_manager:
+    working_dir: /src
+    volumes:
+      - ${OAKESTRA_REPO}/cluster_orchestrator/cluster-manager:/src
+    command: gunicorn --reload --bind [::]:10100 cluster_manager:app

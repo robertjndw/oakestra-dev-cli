@@ -1,0 +1,8 @@
+# Phase 1b live-mount for the cluster scheduler - see
+# override-live-root_scheduler.yml. Same binary, same build (root and cluster
+# schedulers share the scheduler/ source), just a different container.
+services:
+  cluster_scheduler:
+    volumes:
+      - ${OAK_DEV_ROOT}/build/linux_${GOARCH}:/oak-bin:ro
+    entrypoint: ["/oak-bin/scheduler"]

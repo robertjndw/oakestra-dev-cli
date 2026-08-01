@@ -1,0 +1,11 @@
+# Phase 1a live-mount for the root resource abstractor. Upstream's CMD is
+# `python resource_abstractor.py`, which hardcodes debug=False in
+# app.run(...) so FLASK_DEBUG has no effect - switched to gunicorn --reload
+# instead (same pattern as system_manager/cluster_manager) since the module
+# already exposes `app` at import time.
+services:
+  root_resource_abstractor:
+    working_dir: /src
+    volumes:
+      - ${OAKESTRA_REPO}/resource-abstractor:/src
+    command: gunicorn --reload --bind [::]:11011 resource_abstractor:app

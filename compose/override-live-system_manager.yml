@@ -1,0 +1,13 @@
+# Phase 1a live-mount: bind-mount the host system-manager-python checkout over
+# the baked-in copy and let gunicorn reload on save. Because gunicorn and
+# `python x.py` both put cwd on sys.path, pointing working_dir at the mount
+# shadows /system_manager.py etc. while pip deps and the LIB_BRANCH libs still
+# come from the image. proto/*_pb2.py must exist in the host checkout first -
+# run `oak-dev protoc` (see CLAUDE.md: they are gitignored upstream and
+# normally only generated at image build time).
+services:
+  system_manager:
+    working_dir: /src
+    volumes:
+      - ${OAKESTRA_REPO}/root_orchestrator/system-manager-python:/src
+    command: gunicorn --reload --bind [::]:10000 system_manager:app

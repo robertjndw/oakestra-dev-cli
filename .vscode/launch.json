@@ -1,0 +1,100 @@
+{
+  // Attach configs for `oak-dev debug <component>`. Ports match
+  // internal/components' registry - see .generated/compose-args after
+  // running `oak-dev debug <x>` to confirm what's actually published.
+  //
+  // Go (Delve): no path mapping needed. The binary is cross-compiled on this
+  // same host (see internal/build), so the debug info embeds this machine's
+  // absolute source paths even though the binary runs inside a linux
+  // container - there's no remote host to substitute paths for.
+  //
+  // Python (debugpy): pathMappings assume OAKESTRA_REPO's default location
+  // (../oakestra next to this repo) - adjust localRoot if yours differs.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach: scheduler (root)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2345
+    },
+    {
+      "name": "Attach: scheduler (cluster)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2346
+    },
+    {
+      "name": "Attach: nodeengine",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2347
+    },
+    {
+      "name": "Attach: system_manager",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5678 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/../oakestra/root_orchestrator/system-manager-python",
+          "remoteRoot": "/src"
+        }
+      ]
+    },
+    {
+      "name": "Attach: jwt_generator",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5679 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/../oakestra/root_orchestrator/jwt-generator",
+          "remoteRoot": "/src"
+        }
+      ]
+    },
+    {
+      "name": "Attach: root_resource_abstractor",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5680 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/../oakestra/resource-abstractor",
+          "remoteRoot": "/src"
+        }
+      ]
+    },
+    {
+      "name": "Attach: cluster_manager",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5681 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/../oakestra/cluster_orchestrator/cluster-manager",
+          "remoteRoot": "/src"
+        }
+      ]
+    },
+    {
+      "name": "Attach: cluster_resource_abstractor",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5682 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/../oakestra/resource-abstractor",
+          "remoteRoot": "/src"
+        }
+      ]
+    }
+  ]
+}

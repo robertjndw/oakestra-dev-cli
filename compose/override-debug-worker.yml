@@ -1,0 +1,10 @@
+# Phase 1f debug overlay for nodeengine. docker-entrypoint.sh does the
+# containerd/NetManager setup either way and only changes how nodeengined
+# itself is launched, so this just flips an env var rather than replacing the
+# entrypoint (see worker/docker-entrypoint.sh).
+services:
+  worker:
+    environment:
+      - OAK_DEV_DEBUG=1
+    ports:
+      - "2347:2345"

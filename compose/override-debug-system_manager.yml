@@ -1,0 +1,10 @@
+# Phase 1f: `oak-dev debug system_manager` layers this on top of
+# override-live-system_manager.yml. debugpy is pip-installed into the running
+# container on the fly (not in requirements.txt) since this is opt-in tooling,
+# not a production dependency. Single worker, no --reload: both fork extra
+# processes debugpy would not follow into.
+services:
+  system_manager:
+    command: python -m debugpy --listen 0.0.0.0:5999 -m gunicorn --workers 1 --bind [::]:10000 system_manager:app
+    ports:
+      - "5678:5999"
