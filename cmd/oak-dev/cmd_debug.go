@@ -11,6 +11,7 @@ import (
 	"oak-dev/internal/components"
 	"oak-dev/internal/compose"
 	"oak-dev/internal/config"
+	"oak-dev/internal/testsuite"
 	"oak-dev/internal/topology"
 )
 
@@ -45,6 +46,17 @@ root and cluster stacks), narrow it with --stack.`,
 			t, err := pickTarget(cfg, c)
 			if err != nil {
 				return err
+			}
+
+			// Recreating the worker container mid-suite mints a new node ID
+			// and strands scheduled instances (see CLAUDE.md) - `oak-dev dev`
+			// already guards its own worker restarts against this via the
+			// same lock file, but `debug` force-recreates unconditionally
+			// below, so it needs the same guard.
+			if t.Stack == components.StackWorker {
+				if _, err := os.Stat(testsuite.LockPath(cfg)); err == nil {
+					return fmt.Errorf("oak-dev test is running - never restart/recreate the worker mid-suite (it mints a new node ID and strands scheduled instances)")
+				}
 			}
 
 			// The debug override layers on top of the live mount, so the

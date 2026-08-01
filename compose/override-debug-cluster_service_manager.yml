@@ -6,12 +6,18 @@
 # (network_mode: "service:cluster_manager") and override-cluster-
 # servicemanager.yml already !resets its ports/expose to empty, publishing
 # 10110 through cluster_manager for the same reason - see CLAUDE.md.
+#
+# Listens on container-internal 5998, not the 5999 every other debug overlay
+# uses: cluster_manager's own override-debug-cluster_manager.yml also binds
+# debugpy to 5999 inside this same shared network namespace, so `oak-dev
+# debug cm` and `oak-dev debug csm` running at once would otherwise collide
+# on the same port.
 services:
   cluster_manager:
     ports:
-      - "5684:5999"
+      - "5684:5998"
   cluster_service_manager:
     command: >
       sh -c "pip install --quiet --disable-pip-version-check gunicorn &&
-      exec python -m debugpy --listen 0.0.0.0:5999 -m gunicorn -k eventlet
+      exec python -m debugpy --listen 0.0.0.0:5998 -m gunicorn -k eventlet
       --workers 1 --bind [::]:10110 service_manager:app"

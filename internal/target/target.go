@@ -101,9 +101,15 @@ func Resolve(cfg *config.Config, spec string) ([]Target, error) {
 		return out, nil
 	}
 
-	// 2. A named endpoint.
+	// 2. A named endpoint. Accepts underscores as well as the canonical
+	//    dashed spelling (endpoint names use dashes, e.g. "mongo-root", but
+	//    every container/compose-service name in this repo uses underscores
+	//    - typing the more familiar "mongo_root" should still hit the mongosh
+	//    shortcut below rather than silently falling through to a plain
+	//    shell via the raw-container-name branch further down).
+	qDashed := strings.ReplaceAll(q, "_", "-")
 	for _, e := range endpoints {
-		if q == e.name {
+		if qDashed == e.name {
 			if !cfg.StackEnabled(e.stack) {
 				return nil, fmt.Errorf("%s lives in the %s stack, which is not in the current scope (%s)",
 					e.name, e.stack, cfg.Stack)

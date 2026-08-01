@@ -49,17 +49,21 @@ Ctrl-C stops everything.`,
 				return fmt.Errorf("--test only supports 'smoke' (never the full suite: the deployment tests are order-dependent and share state)")
 			}
 
-			watched, err := watchedComponents(cfg, args)
-			if err != nil {
-				return err
-			}
-
 			if _, err := exec.LookPath("watchexec"); err != nil {
 				return fmt.Errorf("watchexec not found on PATH - required for `oak-dev dev`.\n" +
 					"Install it (brew install watchexec) or run `oak-dev doctor`")
 			}
 
+			// Bring the stack up (or just render it, with --no-up) before
+			// resolving/promoting watched components: on a fresh checkout,
+			// promoting a worker-stack component (e.g. `oak-dev dev ne`) has
+			// to recreate the worker container, and worker.yml's network is
+			// `external: true` - it doesn't exist until the root/cluster
+			// stacks have created it. Doing this first, rather than inside
+			// watchedComponents, avoids a "network oakestra not found" error
+			// on the very first run.
 			var files map[string][]string
+			var err error
 			if noUp {
 				fmt.Println("oak-dev: " + cfg.ScopeLine())
 				if err := ensureLiveBinaries(cfg); err != nil {
@@ -74,6 +78,11 @@ Ctrl-C stops everything.`,
 				if err != nil {
 					return err
 				}
+			}
+
+			watched, err := watchedComponents(cfg, args)
+			if err != nil {
+				return err
 			}
 
 			self, err := os.Executable()

@@ -5,5 +5,5 @@ oak-dev.yaml
 __pycache__/
 *.pyc
 .pytest_cache/
-build/
+/build/
 .DS_Store

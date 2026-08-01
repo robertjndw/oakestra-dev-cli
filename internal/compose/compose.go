@@ -86,18 +86,27 @@ func FilesForStack(cfg *config.Config, live map[string]bool, stack string) ([]st
 
 func liveOverrides(cfg *config.Config, live map[string]bool, stack string) []string {
 	var files []string
+	hasLivePython := false
 	for _, c := range components.All() {
 		if !live[c.Name] {
 			continue
 		}
-		for _, t := range c.InStack(stack) {
+		targets := c.InStack(stack)
+		for _, t := range targets {
 			if t.LiveOverride == "" {
 				continue
 			}
 			files = append(files, filepath.Join(cfg.RepoRoot, "compose", t.LiveOverride))
 		}
+		if c.Kind == components.KindPython && len(targets) > 0 {
+			hasLivePython = true
+		}
 	}
-	if len(live) > 0 {
+	// internal/topology.writeLibsOverlays only ever generates libs-<stack>.yml
+	// when the stack has a live Python component in it (root/cluster) - only
+	// reference the file here when that's actually true, or a worker-only
+	// scope with libs_repo set references a file that was never written.
+	if hasLivePython {
 		if genLibs := libsOverridePath(cfg, stack); genLibs != "" {
 			files = append(files, genLibs)
 		}

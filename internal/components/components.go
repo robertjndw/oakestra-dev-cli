@@ -297,8 +297,18 @@ var registry = []Component{
 				// the `dlv exec ... /oak-bin/NetManager` supervisor under
 				// `oak-dev debug netmanager`. nodeengined is bounced too: it
 				// dials NetManager's unix socket once at startup and won't
-				// re-handshake on its own.
-				InPlaceRestart: []string{"sh", "-c", "pkill -x NetManager; sleep 2; pkill nodeengined"},
+				// re-handshake on its own - so it must not be killed until the
+				// relaunched NetManager has actually recreated the socket. A
+				// flat sleep raced that (NetManager can take longer than 2s to
+				// rebuild its socket under load), silently stranding
+				// nodeengined's registration until the next manual reload;
+				// poll for the socket the same way the container's own boot
+				// sequence does, removing the stale file first so the loop
+				// can't false-positive on the pre-restart socket.
+				InPlaceRestart: []string{"sh", "-c",
+					"pkill -x NetManager; rm -f /etc/netmanager/netmanager.sock; " +
+						"for i in $(seq 20); do [ -S /etc/netmanager/netmanager.sock ] && break; sleep 0.5; done; " +
+						"pkill nodeengined"},
 			},
 		},
 	},

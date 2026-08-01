@@ -165,6 +165,7 @@ Does not touch images, and does not touch the NetManager databases
 keeps its node ID and instances until its next handshake.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := cfgFrom(cmd)
+			scoped := cmd.Flags().Changed("stack")
 			if !yes && !confirm("This drops every application database in the root and cluster. Continue?") {
 				return nil
 			}
@@ -198,6 +199,9 @@ keeps its node ID and instances until its next handshake.`,
 			}
 
 			for _, r := range resets {
+				if scoped && !cfg.StackEnabled(r.stack) {
+					continue
+				}
 				f, ok := files[r.stack]
 				if !ok {
 					continue
