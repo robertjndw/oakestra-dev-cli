@@ -73,15 +73,7 @@ With no arguments, reloads every component in live:.`,
 // reloadSet resolves the component arguments, defaulting to the live set.
 func reloadSet(cfg *config.Config, args []string) ([]components.Component, error) {
 	if len(args) == 0 {
-		var out []components.Component
-		for _, name := range cfg.LiveNames() {
-			c, err := components.Resolve(name)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, c)
-		}
-		return out, nil
+		return liveComponents(cfg)
 	}
 
 	var out []components.Component

@@ -26,43 +26,40 @@ func FileArgs(files []string) []string {
 	return args
 }
 
-// RootFiles returns the compose file chain for the root orchestrator stack.
-func RootFiles(cfg *config.Config, live map[string]bool) []string {
+// orchestratorFiles builds the compose file chain shared by RootFiles and
+// ClusterFiles: the base compose file under dir, the opt-out profile
+// overrides it supports, this repo's own overrides, and the live-mount
+// overlays. hasDashboard is false for the cluster stack, which has no
+// dashboard override to opt out of.
+func orchestratorFiles(cfg *config.Config, live map[string]bool, dir string, hasDashboard bool, stack string, repoOverrides ...string) []string {
 	repo := cfg.OakestraRepo
-	files := []string{filepath.Join(repo, "root_orchestrator", "docker-compose.yml")}
+	files := []string{filepath.Join(repo, dir, "docker-compose.yml")}
 	if !cfg.Profiles.Addons {
-		files = append(files, filepath.Join(repo, "root_orchestrator", "override-no-addons.yml"))
+		files = append(files, filepath.Join(repo, dir, "override-no-addons.yml"))
 	}
 	if !cfg.Profiles.Observability {
-		files = append(files, filepath.Join(repo, "root_orchestrator", "override-no-observe.yml"))
+		files = append(files, filepath.Join(repo, dir, "override-no-observe.yml"))
 	}
-	if !cfg.Profiles.Dashboard {
-		files = append(files, filepath.Join(repo, "root_orchestrator", "override-no-dashboard.yml"))
+	if hasDashboard && !cfg.Profiles.Dashboard {
+		files = append(files, filepath.Join(repo, dir, "override-no-dashboard.yml"))
 	}
-	files = append(files,
-		filepath.Join(cfg.RepoRoot, "compose", "override-root-mongo.yml"),
-		filepath.Join(cfg.RepoRoot, "compose", "override-root-servicemanager.yml"),
-	)
-	files = append(files, liveOverrides(cfg, live, components.StackRoot)...)
+	for _, o := range repoOverrides {
+		files = append(files, filepath.Join(cfg.RepoRoot, "compose", o))
+	}
+	files = append(files, liveOverrides(cfg, live, stack)...)
 	return files
+}
+
+// RootFiles returns the compose file chain for the root orchestrator stack.
+func RootFiles(cfg *config.Config, live map[string]bool) []string {
+	return orchestratorFiles(cfg, live, "root_orchestrator", true, components.StackRoot,
+		"override-root-mongo.yml", "override-root-servicemanager.yml")
 }
 
 // ClusterFiles returns the compose file chain for the cluster orchestrator stack.
 func ClusterFiles(cfg *config.Config, live map[string]bool) []string {
-	repo := cfg.OakestraRepo
-	files := []string{filepath.Join(repo, "cluster_orchestrator", "docker-compose.yml")}
-	if !cfg.Profiles.Addons {
-		files = append(files, filepath.Join(repo, "cluster_orchestrator", "override-no-addons.yml"))
-	}
-	if !cfg.Profiles.Observability {
-		files = append(files, filepath.Join(repo, "cluster_orchestrator", "override-no-observe.yml"))
-	}
-	files = append(files,
-		filepath.Join(cfg.RepoRoot, "compose", "override-cluster-mongo.yml"),
-		filepath.Join(cfg.RepoRoot, "compose", "override-cluster-servicemanager.yml"),
-	)
-	files = append(files, liveOverrides(cfg, live, components.StackCluster)...)
-	return files
+	return orchestratorFiles(cfg, live, "cluster_orchestrator", false, components.StackCluster,
+		"override-cluster-mongo.yml", "override-cluster-servicemanager.yml")
 }
 
 // WorkerFiles returns the compose file chain for the dockerized worker.
@@ -70,6 +67,21 @@ func WorkerFiles(cfg *config.Config, live map[string]bool) []string {
 	files := []string{filepath.Join(cfg.RepoRoot, "compose", "worker.yml")}
 	files = append(files, liveOverrides(cfg, live, components.StackWorker)...)
 	return files
+}
+
+// FilesForStack returns the compose file chain for the named stack (root |
+// cluster | worker) - the one place that maps a stack name to its file-chain
+// builder, shared by internal/topology and internal/target.
+func FilesForStack(cfg *config.Config, live map[string]bool, stack string) ([]string, error) {
+	switch stack {
+	case components.StackRoot:
+		return RootFiles(cfg, live), nil
+	case components.StackCluster:
+		return ClusterFiles(cfg, live), nil
+	case components.StackWorker:
+		return WorkerFiles(cfg, live), nil
+	}
+	return nil, fmt.Errorf("unknown stack %q", stack)
 }
 
 func liveOverrides(cfg *config.Config, live map[string]bool, stack string) []string {
@@ -122,14 +134,21 @@ func Env(cfg *config.Config) []string {
 	return env
 }
 
-// Run executes `docker compose <files> <args...>` with output streamed to
-// the current process's stdout/stderr.
-func Run(cfg *config.Config, files []string, args ...string) error {
+// newCmd builds the `docker compose <files> <args...>` command shared by Run
+// and Output, before they diverge on stdio wiring.
+func newCmd(cfg *config.Config, files []string, args ...string) *exec.Cmd {
 	cmdArgs := append([]string{"compose"}, FileArgs(files)...)
 	cmdArgs = append(cmdArgs, args...)
 	cmd := exec.Command("docker", cmdArgs...)
 	cmd.Dir = cfg.RepoRoot
 	cmd.Env = Env(cfg)
+	return cmd
+}
+
+// Run executes `docker compose <files> <args...>` with output streamed to
+// the current process's stdout/stderr.
+func Run(cfg *config.Config, files []string, args ...string) error {
+	cmd := newCmd(cfg, files, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -138,10 +157,5 @@ func Run(cfg *config.Config, files []string, args ...string) error {
 
 // Output runs `docker compose <files> <args...>` and returns combined output.
 func Output(cfg *config.Config, files []string, args ...string) ([]byte, error) {
-	cmdArgs := append([]string{"compose"}, FileArgs(files)...)
-	cmdArgs = append(cmdArgs, args...)
-	cmd := exec.Command("docker", cmdArgs...)
-	cmd.Dir = cfg.RepoRoot
-	cmd.Env = Env(cfg)
-	return cmd.CombinedOutput()
+	return newCmd(cfg, files, args...).CombinedOutput()
 }

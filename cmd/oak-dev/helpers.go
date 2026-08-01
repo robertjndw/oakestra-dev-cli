@@ -80,6 +80,21 @@ func shortSrc(cfg *config.Config, c components.Component) string {
 	return c.SourcePath
 }
 
+// liveComponents resolves cfg.LiveNames() into components, in the same
+// stable order. Shared by `reload`/`dev`'s no-argument case: reload the
+// whole live set, watch the whole live set.
+func liveComponents(cfg *config.Config) ([]components.Component, error) {
+	var out []components.Component
+	for _, name := range cfg.LiveNames() {
+		c, err := components.Resolve(name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
 // ensureLiveBinaries cross-compiles any live Go component that doesn't have a
 // binary on disk yet, so `up` doesn't hand the container an empty /oak-bin
 // mount (the entrypoint would fail to resolve the binary at all, not just run
@@ -93,10 +108,7 @@ func ensureLiveBinaries(cfg *config.Config) error {
 		if !cfg.IsLive(c.Name) {
 			continue
 		}
-		wanted := []string{c.BinName}
-		if c.Name == components.NodeEngineName {
-			wanted = []string{"NodeEngine", "nodeengined"}
-		}
+		wanted := append([]string{c.BinName}, c.ExtraBinNames...)
 		present := true
 		for _, name := range wanted {
 			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {

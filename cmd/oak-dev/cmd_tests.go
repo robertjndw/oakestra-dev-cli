@@ -66,7 +66,7 @@ Anything after -- goes straight to pytest or go test.`,
 			}
 
 			if !noUp {
-				if err := runUp(cfg, true); err != nil {
+				if _, err := runUp(cfg, true); err != nil {
 					return err
 				}
 			}

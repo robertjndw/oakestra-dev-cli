@@ -4,19 +4,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
+	"oak-dev/internal/components"
 	"oak-dev/internal/config"
 )
-
-// protoTargets are the two services whose Dockerfiles generate protobuf stubs
-// at image build time. The generated files are gitignored upstream, so a live
-// bind-mount of the source tree without them import-errors on startup.
-var protoTargets = []string{
-	filepath.Join("root_orchestrator", "system-manager-python"),
-	filepath.Join("cluster_orchestrator", "cluster-manager"),
-}
 
 // FixProto generates proto/*_pb2.py inside the host oakestra checkout, running
 // grpc_tools in a throwaway container so no host Python setup is needed. This
@@ -28,8 +20,11 @@ func FixProto(cfg *config.Config) error {
 	const script = "pip install --quiet --no-cache-dir grpcio-tools && " +
 		"python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. proto/clusterRegistration.proto"
 
-	for _, rel := range protoTargets {
-		dir := filepath.Join(cfg.OakestraRepo, rel)
+	for _, c := range components.All() {
+		if !c.NeedsProtoStubs {
+			continue
+		}
+		dir := cfg.SourceDir(c)
 		if _, err := os.Stat(dir); err != nil {
 			return fmt.Errorf("%s does not exist - is OAKESTRA_REPO right?", dir)
 		}

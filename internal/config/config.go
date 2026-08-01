@@ -274,9 +274,7 @@ func (c *Config) ScopeLine() string {
 }
 
 // AddLive adds a component to oak-dev.yaml's live: list and to the in-memory
-// config. It edits the file through the yaml.Node API rather than a
-// marshal round-trip because oak-dev.yaml is a hand-written, heavily commented
-// file and a round-trip would silently strip every comment in it.
+// config.
 //
 // Reports whether the file actually changed.
 func (c *Config) AddLive(name string) (bool, error) {
@@ -288,33 +286,10 @@ func (c *Config) AddLive(name string) (bool, error) {
 		return false, nil
 	}
 
-	path := filepath.Join(c.RepoRoot, yamlFileName)
-	data, err := os.ReadFile(path)
+	err = editYAMLFile(c.RepoRoot, []byte("# Created by oak-dev.\nlive: []\n"), func(doc *yaml.Node) error {
+		return appendToSequence(doc, "live", comp.Name)
+	})
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return false, err
-		}
-		data = []byte("# Created by oak-dev.\nlive: []\n")
-	}
-
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return false, fmt.Errorf("parsing %s: %w", yamlFileName, err)
-	}
-	if err := appendToSequence(&doc, "live", comp.Name); err != nil {
-		return false, fmt.Errorf("updating %s: %w", yamlFileName, err)
-	}
-
-	var buf strings.Builder
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
-		return false, err
-	}
-	if err := enc.Close(); err != nil {
-		return false, err
-	}
-	if err := os.WriteFile(path, []byte(buf.String()), 0o644); err != nil {
 		return false, err
 	}
 
@@ -322,17 +297,64 @@ func (c *Config) AddLive(name string) (bool, error) {
 	return true, nil
 }
 
-// appendToSequence adds value to the sequence stored under key in the
-// document's top-level mapping, creating the key or the sequence if needed.
-func appendToSequence(doc *yaml.Node, key, value string) error {
+// editYAMLFile reads oak-dev.yaml (or placeholder if it doesn't exist yet),
+// applies mutate to the parsed document, and writes the result back. Edits go
+// through the yaml.Node API rather than a marshal round-trip, because
+// oak-dev.yaml is a hand-written, heavily commented file and a round-trip
+// would silently strip every comment in it. Shared by AddLive and Set, the
+// only two things that write oak-dev.yaml programmatically.
+func editYAMLFile(repoRoot string, placeholder []byte, mutate func(*yaml.Node) error) error {
+	path := filepath.Join(repoRoot, yamlFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		data = placeholder
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parsing %s: %w", yamlFileName, err)
+	}
+	if err := mutate(&doc); err != nil {
+		return fmt.Errorf("updating %s: %w", yamlFileName, err)
+	}
+
+	var buf strings.Builder
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return err
+	}
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(buf.String()), 0o644)
+}
+
+// ensureTopLevelMap normalizes doc into a document whose root is a mapping -
+// an empty or comment-only file unmarshals to a zero node - and returns that
+// root. Shared by appendToSequence and setScalarPath, the two yaml.Node
+// mutators editYAMLFile's callers use.
+func ensureTopLevelMap(doc *yaml.Node) (*yaml.Node, error) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		// An empty or comment-only file unmarshals to a zero node.
 		doc.Kind = yaml.DocumentNode
 		doc.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
 	}
 	root := doc.Content[0]
 	if root.Kind != yaml.MappingNode {
-		return fmt.Errorf("expected a top-level mapping, got %v", root.Kind)
+		return nil, fmt.Errorf("expected a top-level mapping, got %v", root.Kind)
+	}
+	return root, nil
+}
+
+// appendToSequence adds value to the sequence stored under key in the
+// document's top-level mapping, creating the key or the sequence if needed.
+func appendToSequence(doc *yaml.Node, key, value string) error {
+	root, err := ensureTopLevelMap(doc)
+	if err != nil {
+		return err
 	}
 
 	scalar := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
@@ -377,12 +399,10 @@ func (c *Config) StackEnabled(stack string) bool {
 	}
 }
 
-func goarch() string {
-	out, err := exec.Command("uname", "-m").Output()
-	arch := strings.TrimSpace(string(out))
-	if err != nil {
-		arch = "arm64"
-	}
+// NormalizeArch maps `uname -m`/`docker info` spellings to Go's GOARCH
+// values ("x86_64" -> "amd64", "aarch64" -> "arm64") - the mismatch
+// CLAUDE.md's Gotchas section warns must be reconciled before comparing.
+func NormalizeArch(arch string) string {
 	switch arch {
 	case "x86_64":
 		return "amd64"
@@ -391,6 +411,15 @@ func goarch() string {
 	default:
 		return arch
 	}
+}
+
+func goarch() string {
+	out, err := exec.Command("uname", "-m").Output()
+	arch := strings.TrimSpace(string(out))
+	if err != nil {
+		arch = "arm64"
+	}
+	return NormalizeArch(arch)
 }
 
 func loadDotEnv(path string) map[string]string {

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"oak-dev/internal/components"
 	"oak-dev/internal/config"
 )
 
@@ -24,9 +25,6 @@ type Result struct {
 	Detail   string
 	Fix      string
 }
-
-// CheckFunc inspects the environment and returns a Result.
-type CheckFunc func(cfg *config.Config) Result
 
 type namedCheck struct {
 	name     string
@@ -183,8 +181,7 @@ func checkArch(cfg *config.Config) (bool, string, string) {
 		return true, "docker not reachable, skipping", ""
 	}
 	dockerArch := strings.TrimSpace(string(dockerOut))
-	norm := map[string]string{"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
-	if norm[host] != "" && norm[dockerArch] != "" && norm[host] != norm[dockerArch] {
+	if config.NormalizeArch(host) != config.NormalizeArch(dockerArch) {
 		return false, fmt.Sprintf("host %s vs docker engine %s", host, dockerArch),
 			"OrbStack/Docker Desktop sometimes omits TARGETARCH - check your engine's platform settings"
 	}
@@ -192,12 +189,12 @@ func checkArch(cfg *config.Config) (bool, string, string) {
 }
 
 func checkProto(cfg *config.Config) (bool, string, string) {
-	targets := []string{
-		filepath.Join(cfg.OakestraRepo, "root_orchestrator", "system-manager-python", "proto", "clusterRegistration_pb2.py"),
-		filepath.Join(cfg.OakestraRepo, "cluster_orchestrator", "cluster-manager", "proto", "clusterRegistration_pb2.py"),
-	}
 	var missing []string
-	for _, t := range targets {
+	for _, c := range components.All() {
+		if !c.NeedsProtoStubs {
+			continue
+		}
+		t := filepath.Join(cfg.SourceDir(c), "proto", "clusterRegistration_pb2.py")
 		if _, err := os.Stat(t); err != nil {
 			missing = append(missing, t)
 		}

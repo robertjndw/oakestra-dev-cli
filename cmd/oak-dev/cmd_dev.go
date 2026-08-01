@@ -59,16 +59,21 @@ Ctrl-C stops everything.`,
 					"Install it (brew install watchexec) or run `oak-dev doctor`")
 			}
 
+			var files map[string][]string
 			if noUp {
 				fmt.Println("oak-dev: " + cfg.ScopeLine())
 				if err := ensureLiveBinaries(cfg); err != nil {
 					return err
 				}
-				if _, err := topology.Render(cfg); err != nil {
+				files, err = topology.Render(cfg)
+				if err != nil {
 					return err
 				}
-			} else if err := runUp(cfg, true); err != nil {
-				return err
+			} else {
+				files, err = runUp(cfg, true)
+				if err != nil {
+					return err
+				}
 			}
 
 			self, err := os.Executable()
@@ -80,7 +85,7 @@ Ctrl-C stops everything.`,
 			defer stop()
 
 			var sources []multilog.Source
-			sources = append(sources, stackLogSources(cfg, "log:", 20)...)
+			sources = append(sources, stackLogSources(files, cfg, "log:", 20)...)
 			sources = append(sources, watchSources(cfg, watched, self, testMode)...)
 
 			printDevSummary(cfg, watched)
@@ -111,25 +116,14 @@ func watchedComponents(cfg *config.Config, args []string) ([]components.Componen
 		return out, nil
 	}
 
-	var out []components.Component
-	for _, name := range cfg.LiveNames() {
-		c, err := components.Resolve(name)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, nil
+	return liveComponents(cfg)
 }
 
-// stackLogSources returns one `docker compose logs -f` per stack in scope.
-// Shared with `oak-dev logs`, which previously had its own near-identical copy
-// that differed only in tail length and tag prefix.
-func stackLogSources(cfg *config.Config, prefix string, tail int) []multilog.Source {
-	files, err := topology.Render(cfg)
-	if err != nil {
-		return nil
-	}
+// stackLogSources returns one `docker compose logs -f` per stack in scope,
+// from an already-rendered topology. Shared with `oak-dev logs`, which
+// previously had its own near-identical copy that differed only in tail
+// length and tag prefix.
+func stackLogSources(files map[string][]string, cfg *config.Config, prefix string, tail int) []multilog.Source {
 	var out []multilog.Source
 	for _, stack := range upOrder {
 		f, ok := files[stack]

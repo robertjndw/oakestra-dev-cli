@@ -21,6 +21,9 @@ type settableKey struct {
 	// the priority order documented on Load. Empty if none exists.
 	envVar string
 	kind   string // "string" | "workers" | "bool" | "stack"
+	// get reads the resolved value (the same one Load produced) off a
+	// Config, for `oak-dev config get`.
+	get func(*Config) string
 }
 
 // configKeys is every oak-dev.yaml key `oak-dev config get`/`set` accepts.
@@ -28,17 +31,17 @@ type settableKey struct {
 // bare list of component names doesn't fit a single scalar value. Anything
 // else is still editable by hand in oak-dev.yaml.
 var configKeys = map[string]settableKey{
-	"oakestra_repo":          {path: []string{"oakestra_repo"}, envVar: "OAKESTRA_REPO", kind: "string"},
-	"libs_repo":              {path: []string{"libs_repo"}, envVar: "OAKESTRA_LIBS_REPO", kind: "string"},
-	"cluster.name":           {path: []string{"cluster", "name"}, envVar: "CLUSTER_NAME", kind: "string"},
-	"cluster.location":       {path: []string{"cluster", "location"}, envVar: "CLUSTER_LOCATION", kind: "string"},
-	"workers":                {path: []string{"workers"}, kind: "workers"},
-	"stack":                  {path: []string{"stack"}, envVar: "OAK_DEV_STACK", kind: "stack"},
-	"profiles.dashboard":     {path: []string{"profiles", "dashboard"}, kind: "bool"},
-	"profiles.observability": {path: []string{"profiles", "observability"}, kind: "bool"},
-	"profiles.addons":        {path: []string{"profiles", "addons"}, kind: "bool"},
-	"versions.netmanager":    {path: []string{"versions", "netmanager"}, envVar: "NETMANAGER_VERSION", kind: "string"},
-	"versions.lib_branch":    {path: []string{"versions", "lib_branch"}, envVar: "LIB_BRANCH", kind: "string"},
+	"oakestra_repo":          {path: []string{"oakestra_repo"}, envVar: "OAKESTRA_REPO", kind: "string", get: func(c *Config) string { return c.OakestraRepo }},
+	"libs_repo":              {path: []string{"libs_repo"}, envVar: "OAKESTRA_LIBS_REPO", kind: "string", get: func(c *Config) string { return c.LibsRepo }},
+	"cluster.name":           {path: []string{"cluster", "name"}, envVar: "CLUSTER_NAME", kind: "string", get: func(c *Config) string { return c.ClusterName }},
+	"cluster.location":       {path: []string{"cluster", "location"}, envVar: "CLUSTER_LOCATION", kind: "string", get: func(c *Config) string { return c.ClusterLoc }},
+	"workers":                {path: []string{"workers"}, kind: "workers", get: func(c *Config) string { return strconv.Itoa(c.Workers) }},
+	"stack":                  {path: []string{"stack"}, envVar: "OAK_DEV_STACK", kind: "stack", get: func(c *Config) string { return c.Stack }},
+	"profiles.dashboard":     {path: []string{"profiles", "dashboard"}, kind: "bool", get: func(c *Config) string { return strconv.FormatBool(c.Profiles.Dashboard) }},
+	"profiles.observability": {path: []string{"profiles", "observability"}, kind: "bool", get: func(c *Config) string { return strconv.FormatBool(c.Profiles.Observability) }},
+	"profiles.addons":        {path: []string{"profiles", "addons"}, kind: "bool", get: func(c *Config) string { return strconv.FormatBool(c.Profiles.Addons) }},
+	"versions.netmanager":    {path: []string{"versions", "netmanager"}, envVar: "NETMANAGER_VERSION", kind: "string", get: func(c *Config) string { return c.NetManagerVersion }},
+	"versions.lib_branch":    {path: []string{"versions", "lib_branch"}, envVar: "LIB_BRANCH", kind: "string", get: func(c *Config) string { return c.LibBranch }},
 }
 
 // ConfigKeys returns every key `oak-dev config` accepts, sorted.
@@ -58,32 +61,11 @@ func unknownKeyError(key string) error {
 // Get returns the resolved value of key - the same value Load produced,
 // so it reflects any .env/process-env override, not just what's on disk.
 func (c *Config) Get(key string) (string, error) {
-	switch key {
-	case "oakestra_repo":
-		return c.OakestraRepo, nil
-	case "libs_repo":
-		return c.LibsRepo, nil
-	case "cluster.name":
-		return c.ClusterName, nil
-	case "cluster.location":
-		return c.ClusterLoc, nil
-	case "workers":
-		return strconv.Itoa(c.Workers), nil
-	case "stack":
-		return c.Stack, nil
-	case "profiles.dashboard":
-		return strconv.FormatBool(c.Profiles.Dashboard), nil
-	case "profiles.observability":
-		return strconv.FormatBool(c.Profiles.Observability), nil
-	case "profiles.addons":
-		return strconv.FormatBool(c.Profiles.Addons), nil
-	case "versions.netmanager":
-		return c.NetManagerVersion, nil
-	case "versions.lib_branch":
-		return c.LibBranch, nil
-	default:
+	sk, ok := configKeys[key]
+	if !ok {
 		return "", unknownKeyError(key)
 	}
+	return sk.get(c), nil
 }
 
 // Set writes value into oak-dev.yaml at key, preserving the file's comments
@@ -104,33 +86,10 @@ func (c *Config) Set(key, value string) (envOverride string, err error) {
 		return "", fmt.Errorf("%s: %w", key, err)
 	}
 
-	path := filepath.Join(c.RepoRoot, yamlFileName)
-	data, err := os.ReadFile(path)
+	err = editYAMLFile(c.RepoRoot, []byte("# Created by oak-dev.\n"), func(doc *yaml.Node) error {
+		return setScalarPath(doc, sk.path, tag, normalized)
+	})
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		data = []byte("# Created by oak-dev.\n")
-	}
-
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return "", fmt.Errorf("parsing %s: %w", yamlFileName, err)
-	}
-	if err := setScalarPath(&doc, sk.path, tag, normalized); err != nil {
-		return "", fmt.Errorf("updating %s: %w", yamlFileName, err)
-	}
-
-	var buf strings.Builder
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
-		return "", err
-	}
-	if err := enc.Close(); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, []byte(buf.String()), 0o644); err != nil {
 		return "", err
 	}
 
@@ -191,13 +150,9 @@ func (sk settableKey) encode(value string) (tag, normalized string, err error) {
 // creating intermediate mappings as needed. Shares AddLive's rationale for
 // editing through yaml.Node rather than a marshal round-trip.
 func setScalarPath(doc *yaml.Node, path []string, tag, value string) error {
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		doc.Kind = yaml.DocumentNode
-		doc.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
-	}
-	node := doc.Content[0]
-	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("expected a top-level mapping, got %v", node.Kind)
+	node, err := ensureTopLevelMap(doc)
+	if err != nil {
+		return err
 	}
 
 	for depth, key := range path {

@@ -266,13 +266,5 @@ func findService(cfg *config.Config, name string) (string, bool) {
 }
 
 func stackFiles(cfg *config.Config, stack string) ([]string, error) {
-	switch stack {
-	case components.StackRoot:
-		return compose.RootFiles(cfg, cfg.Live), nil
-	case components.StackCluster:
-		return compose.ClusterFiles(cfg, cfg.Live), nil
-	case components.StackWorker:
-		return compose.WorkerFiles(cfg, cfg.Live), nil
-	}
-	return nil, fmt.Errorf("unknown stack %q", stack)
+	return compose.FilesForStack(cfg, cfg.Live, stack)
 }

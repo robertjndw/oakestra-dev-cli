@@ -35,16 +35,20 @@ from.`,
 			if workers > 0 {
 				cfg.Workers = workers
 			}
-			return runUp(cfg, true)
+			_, err := runUp(cfg, true)
+			return err
 		},
 	}
 	cmd.Flags().IntVar(&workers, "workers", 0, "number of dockerized workers to run")
 	return cmd
 }
 
-// runUp brings up every stack in scope. Shared with `dev` and `test`, which
-// both start the stack themselves rather than failing against a stopped one.
-func runUp(cfg *config.Config, sticky bool) error {
+// runUp brings up every stack in scope and returns the compose file chains it
+// rendered to do so, so callers that need to act on the same topology
+// afterward (`dev`'s log sources) don't have to render it again. Shared with
+// `dev` and `test`, which both start the stack themselves rather than failing
+// against a stopped one.
+func runUp(cfg *config.Config, sticky bool) (map[string][]string, error) {
 	fmt.Println("oak-dev: " + cfg.ScopeLine())
 
 	if sticky {
@@ -53,16 +57,16 @@ func runUp(cfg *config.Config, sticky bool) error {
 		// instead of falling back to oak-dev.yaml's static stack: and trying
 		// to touch a stack that was never started.
 		if err := config.SetLastStack(cfg.RepoRoot, cfg.Stack); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if err := ensureLiveBinaries(cfg); err != nil {
-		return err
+		return nil, err
 	}
 	files, err := topology.Render(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	for _, stack := range upOrder {
@@ -76,10 +80,10 @@ func runUp(cfg *config.Config, sticky bool) error {
 		}
 		fmt.Printf("oak-dev: starting %s stack...\n", stack)
 		if err := runStack(cfg, stack, f, upArgs...); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return files, nil
 }
 
 func newDownCmd() *cobra.Command {

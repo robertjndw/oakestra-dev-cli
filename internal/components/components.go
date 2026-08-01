@@ -105,6 +105,13 @@ type Component struct {
 	GoMain string
 	// BinName is the output binary name under build/linux_<arch>/.
 	BinName string
+	// ExtraBinNames are additional output binaries besides BinName that a
+	// build of this component produces - currently just nodeengine, whose
+	// build also produces the NodeEngine CLI alongside the nodeengined
+	// daemon. Anything checking "does this component's build exist on disk"
+	// or "what did this build produce" should use BinName plus this instead
+	// of special-casing the component by name.
+	ExtraBinNames []string
 	// VersionVar, if set, is the ldflags -X target stamped with "dev" at
 	// build time (e.g. "NetManager/cmd.Version"), so `<bin> version` reports
 	// something other than the upstream default. Empty means no stamping.
@@ -115,7 +122,13 @@ type Component struct {
 	// can't do anything useful for it and errors instead of shelling out to a
 	// `docker compose build` that would fail confusingly.
 	PrebuiltImage bool
-	Targets       []Target
+	// NeedsProtoStubs marks a component whose Dockerfile generates
+	// proto/*_pb2.py at image build time. The generated files are gitignored
+	// upstream, so a live bind-mount of the source tree without them
+	// import-errors on startup - doctor.FixProto generates them ahead of time
+	// for every component with this set.
+	NeedsProtoStubs bool
+	Targets         []Target
 }
 
 // NodeEngine needs two binaries (the CLI used only for config, and the
@@ -130,11 +143,12 @@ const NetManagerName = "netmanager"
 
 var registry = []Component{
 	{
-		Name:       "system_manager",
-		Aliases:    []string{"sm"},
-		Kind:       KindPython,
-		Repo:       RepoOakestra,
-		SourcePath: "root_orchestrator/system-manager-python",
+		Name:            "system_manager",
+		Aliases:         []string{"sm"},
+		Kind:            KindPython,
+		Repo:            RepoOakestra,
+		SourcePath:      "root_orchestrator/system-manager-python",
+		NeedsProtoStubs: true,
 		Targets: []Target{{
 			Stack: StackRoot, Container: "system_manager",
 			Module: "system_manager:app", Port: 10000,
@@ -169,11 +183,12 @@ var registry = []Component{
 		}},
 	},
 	{
-		Name:       "cluster_manager",
-		Aliases:    []string{"cm"},
-		Kind:       KindPython,
-		Repo:       RepoOakestra,
-		SourcePath: "cluster_orchestrator/cluster-manager",
+		Name:            "cluster_manager",
+		Aliases:         []string{"cm"},
+		Kind:            KindPython,
+		Repo:            RepoOakestra,
+		SourcePath:      "cluster_orchestrator/cluster-manager",
+		NeedsProtoStubs: true,
 		Targets: []Target{{
 			Stack: StackCluster, Container: "cluster_manager",
 			Module: "cluster_manager:app", Port: 10100,
@@ -216,11 +231,12 @@ var registry = []Component{
 		// Deliberately not aliased to "worker": that is already a stack name
 		// and a container name, and the three-way collision is one of the
 		// things that made the old surface hard to reason about.
-		Aliases:    []string{"ne"},
-		Kind:       KindGo,
-		Repo:       RepoOakestra,
-		SourcePath: "go_node_engine",
-		BinName:    "nodeengined", // the daemon is the reload/debug target; NodeEngine (CLI) is built alongside it
+		Aliases:       []string{"ne"},
+		Kind:          KindGo,
+		Repo:          RepoOakestra,
+		SourcePath:    "go_node_engine",
+		BinName:       "nodeengined", // the daemon is the reload/debug target; NodeEngine (CLI) is built alongside it
+		ExtraBinNames: []string{"NodeEngine"},
 		Targets: []Target{
 			{Stack: StackWorker, Container: "worker",
 				LiveOverride:  "override-live-worker.yml",

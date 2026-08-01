@@ -48,7 +48,11 @@ Ctrl-C stops everything.`,
 
 			var sources []multilog.Source
 			if len(args) == 0 {
-				sources = stackLogSources(cfg, "", tail)
+				files, err := topology.Render(cfg)
+				if err != nil {
+					return err
+				}
+				sources = stackLogSources(files, cfg, "", tail)
 			} else {
 				targets, err := target.ResolveAll(cfg, args)
 				if err != nil {

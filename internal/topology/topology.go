@@ -39,23 +39,17 @@ func Render(cfg *config.Config) (map[string][]string, error) {
 	var argsDump strings.Builder
 	merged := map[string]any{"services": map[string]any{}}
 
-	stacks := []struct {
-		name string
-		fn   func(*config.Config, map[string]bool) []string
-	}{
-		{components.StackRoot, compose.RootFiles},
-		{components.StackCluster, compose.ClusterFiles},
-		{components.StackWorker, compose.WorkerFiles},
-	}
-
-	for _, s := range stacks {
-		if !cfg.StackEnabled(s.name) {
+	for _, name := range components.Stacks() {
+		if !cfg.StackEnabled(name) {
 			continue
 		}
-		fchain := s.fn(cfg, cfg.Live)
-		files[s.name] = fchain
+		fchain, err := compose.FilesForStack(cfg, cfg.Live, name)
+		if err != nil {
+			return nil, err
+		}
+		files[name] = fchain
 
-		fmt.Fprintf(&argsDump, "# %s\n", s.name)
+		fmt.Fprintf(&argsDump, "# %s\n", name)
 		for _, f := range fchain {
 			fmt.Fprintf(&argsDump, "-f %s\n", f)
 		}
