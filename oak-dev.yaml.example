@@ -7,6 +7,8 @@
 # NETMANAGER_VERSION).
 
 oakestra_repo: ../oakestra
+oakestra_net_repo: ../oakestra-net  # only needed for root_service_manager/
+                                     # cluster_service_manager/netmanager
 libs_repo: null                # optional: a local oakestra_utils_library checkout
 
 cluster:
@@ -25,7 +27,8 @@ workers: 1
 #
 # Names, with their aliases: system_manager (sm), jwt_generator (jwt),
 # root_resource_abstractor (rra), cluster_manager (cm),
-# cluster_resource_abstractor (cra), scheduler (sched), nodeengine (ne).
+# cluster_resource_abstractor (cra), scheduler (sched), nodeengine (ne),
+# root_service_manager (rsm), cluster_service_manager (csm), netmanager (nm).
 live: [system_manager, cluster_manager]
 
 # Default scope. full | root | cluster | worker - `worker` also brings up

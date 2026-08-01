@@ -1,0 +1,16 @@
+# `oak-dev debug netmanager` layers this on top of override-live-netmanager.yml.
+# Like override-debug-worker.yml, this flips an env var rather than swapping
+# the entrypoint: docker-entrypoint.sh still has to bring up containerd and
+# the port forwards first, so the daemon it launches under Delve is chosen
+# inside the supervisor loop, not by replacing `entrypoint:` here.
+#
+# Delve listens on :2346 inside the container, not :2345 - nodeengine's debug
+# overlay (override-debug-worker.yml) already uses :2345 in there, and both
+# supervisor loops can be debugging at once (nodeengined and NetManager are
+# separate processes in the same container).
+services:
+  worker:
+    environment:
+      - OAK_DEV_DEBUG_NETMANAGER=1
+    ports:
+      - "2348:2346"

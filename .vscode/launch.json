@@ -10,6 +10,8 @@
   //
   // Python (debugpy): pathMappings assume OAKESTRA_REPO's default location
   // (../oakestra next to this repo) - adjust localRoot if yours differs.
+  // root_service_manager/cluster_service_manager instead assume
+  // OAKESTRA_NET_REPO's default (../oakestra-net).
   "version": "0.2.0",
   "configurations": [
     {
@@ -35,6 +37,14 @@
       "mode": "remote",
       "host": "127.0.0.1",
       "port": 2347
+    },
+    {
+      "name": "Attach: netmanager",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2348
     },
     {
       "name": "Attach: system_manager",
@@ -92,6 +102,30 @@
       "pathMappings": [
         {
           "localRoot": "${workspaceFolder}/../oakestra/resource-abstractor",
+          "remoteRoot": "/src"
+        }
+      ]
+    },
+    {
+      "name": "Attach: root_service_manager",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5683 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/../oakestra-net/root-service-manager/service-manager",
+          "remoteRoot": "/src"
+        }
+      ]
+    },
+    {
+      "name": "Attach: cluster_service_manager",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5684 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/../oakestra-net/cluster-service-manager/service-manager",
           "remoteRoot": "/src"
         }
       ]

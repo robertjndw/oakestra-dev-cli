@@ -1,0 +1,17 @@
+# `oak-dev debug cluster_service_manager` layers this on top of
+# override-live-cluster_service_manager.yml.
+#
+# The debug port is published on cluster_manager, not on
+# cluster_service_manager: this container has no network namespace of its own
+# (network_mode: "service:cluster_manager") and override-cluster-
+# servicemanager.yml already !resets its ports/expose to empty, publishing
+# 10110 through cluster_manager for the same reason - see CLAUDE.md.
+services:
+  cluster_manager:
+    ports:
+      - "5684:5999"
+  cluster_service_manager:
+    command: >
+      sh -c "pip install --quiet --disable-pip-version-check gunicorn &&
+      exec python -m debugpy --listen 0.0.0.0:5999 -m gunicorn -k eventlet
+      --workers 1 --bind [::]:10110 service_manager:app"

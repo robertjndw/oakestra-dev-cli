@@ -24,8 +24,8 @@ works for the component:
 
   Python    already bind-mounted and running under gunicorn --reload - nothing to do
   scheduler cross-compile for linux/<arch>, then restart the container in place
-  nodeengine cross-compile, then restart nodeengined inside the worker without
-            recreating the container (recreating mints a new node ID and strands
+  nodeengine, cross-compile, then restart the process inside the worker without
+  netmanager  recreating the container (recreating mints a new node ID and strands
             scheduled instances - see CLAUDE.md)
 
 Use --image when the change is one no mount can pick up: requirements.txt, a
@@ -106,6 +106,12 @@ func reloadComponent(cfg *config.Config, c components.Component, image, noLive, 
 			"Widen it with --stack full, or bring up the stack it lives in", c.Name, cfg.Stack)
 	}
 
+	if image && c.PrebuiltImage {
+		return fmt.Errorf("%s has no local build: section - it runs a pinned upstream image, "+
+			"so there's nothing for --image to rebuild.\nDrop --image; a plain `oak-dev reload %s` "+
+			"already picks up source edits via gunicorn --reload", c.Name, c.Name)
+	}
+
 	// An image rebuild replaces the baked copy, so it works whether or not the
 	// component is live. Everything else needs the bind-mount to be in place.
 	if !image {
@@ -125,7 +131,7 @@ func reloadComponent(cfg *config.Config, c components.Component, image, noLive, 
 
 	switch c.Kind {
 	case components.KindPython:
-		if err := reconcile(cfg, c, inScope, files); err != nil {
+		if err := reconcile(cfg, inScope, files); err != nil {
 			return err
 		}
 		fmt.Printf("oak-dev: %s runs from %s under gunicorn --reload - your edit is already live.\n",
@@ -143,15 +149,17 @@ func reloadComponent(cfg *config.Config, c components.Component, image, noLive, 
 // overrides change the entrypoint or environment, and so survive a plain
 // restart.
 //
-// Skipped for the worker: there, a recreate mints a new hostname, which makes
-// cluster_manager register a new node ID and strands every already-scheduled
-// instance in NODE_SCHEDULED. Coming back from `debug nodeengine` therefore
-// needs an explicit `oak-dev up`.
-func reconcile(cfg *config.Config, c components.Component, targets []components.Target, files map[string][]string) error {
-	if c.Name == components.NodeEngineName {
-		return nil
-	}
+// Skipped for any target with InPlaceRestart set (currently nodeengine and
+// netmanager, both living in the worker container): there, a recreate mints a
+// new hostname, which makes cluster_manager register a new node ID and
+// strands every already-scheduled instance in NODE_SCHEDULED. Coming back
+// from `debug nodeengine`/`debug netmanager` therefore needs an explicit
+// `oak-dev up`.
+func reconcile(cfg *config.Config, targets []components.Target, files map[string][]string) error {
 	for _, t := range targets {
+		if len(t.InPlaceRestart) > 0 {
+			continue
+		}
 		f := files[t.Stack]
 		if f == nil {
 			continue
@@ -175,34 +183,41 @@ func reloadViaBinary(cfg *config.Config, c components.Component, targets []compo
 	}
 
 	// Undo any debug overlay before restarting; a plain restart would keep it.
-	if err := reconcile(cfg, c, targets, files); err != nil {
+	if err := reconcile(cfg, targets, files); err != nil {
 		return err
 	}
 
+	var inPlace, recreated []components.Target
 	for _, t := range targets {
 		f := files[t.Stack]
 		if f == nil {
 			continue
 		}
-		if c.Name == components.NodeEngineName {
-			// Restart the daemon, never the container. docker-entrypoint.sh
-			// supervises nodeengined in a loop precisely so this works: a new
-			// container means a new hostname, which means cluster_manager
-			// registers a new node ID and every instance scheduled to the old
-			// one is stuck in NODE_SCHEDULED forever.
-			if out, err := compose.Output(cfg, f, "exec", "-T", t.Container, "pkill", "nodeengined"); err != nil {
-				return fmt.Errorf("restarting nodeengined in %s: %w\n%s", t.Container, err, out)
+		if len(t.InPlaceRestart) > 0 {
+			// Restart the process inside the container, never the container
+			// itself. docker-entrypoint.sh supervises it in a loop precisely
+			// so this works: a new container means a new hostname, which
+			// means cluster_manager registers a new node ID and every
+			// instance scheduled to the old one is stuck in NODE_SCHEDULED
+			// forever.
+			execArgs := append([]string{"exec", "-T", t.Container}, t.InPlaceRestart...)
+			if out, err := compose.Output(cfg, f, execArgs...); err != nil {
+				return fmt.Errorf("restarting %s in %s: %w\n%s", c.Name, t.Container, err, out)
 			}
-			fmt.Printf("oak-dev: nodeengined restarted in place (node ID preserved).\n")
+			inPlace = append(inPlace, t)
 			continue
 		}
 		if err := compose.Run(cfg, f, "restart", t.Container); err != nil {
 			return fmt.Errorf("restarting %s: %w", t.Container, err)
 		}
+		recreated = append(recreated, t)
 	}
 
-	if c.Name != components.NodeEngineName {
-		fmt.Printf("oak-dev: %s restarted on the new binary (%s).\n", c.Name, containerList(targets))
+	if len(inPlace) > 0 {
+		fmt.Printf("oak-dev: %s restarted in place inside %s (node ID preserved).\n", c.Name, containerList(inPlace))
+	}
+	if len(recreated) > 0 {
+		fmt.Printf("oak-dev: %s restarted on the new binary (%s).\n", c.Name, containerList(recreated))
 	}
 	return nil
 }

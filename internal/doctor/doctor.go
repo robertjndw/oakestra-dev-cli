@@ -37,6 +37,7 @@ type namedCheck struct {
 
 var checks = []namedCheck{
 	{"OAKESTRA_REPO checkout", "Makefile", false, checkOakestraRepo},
+	{"OAKESTRA_NET_REPO checkout", "needed for root_service_manager/cluster_service_manager/netmanager", true, checkOakestraNetRepo},
 	{"docker + compose", "oakestra-deploy .../orchestrator.yml", false, checkDockerCompose},
 	{"kernel vs mongo pin", "CLAUDE.md, MongoDB SERVER-121912", false, checkKernelMongoPin},
 	{"host arch vs docker arch", "worker/Dockerfile", false, checkArch},
@@ -115,6 +116,15 @@ func checkOakestraRepo(cfg *config.Config) (bool, string, string) {
 		return false, cfg.OakestraRepo + " has no version.txt", "set OAKESTRA_REPO in .env or oak-dev.yaml to a real oakestra checkout"
 	}
 	return true, cfg.OakestraRepo, ""
+}
+
+func checkOakestraNetRepo(cfg *config.Config) (bool, string, string) {
+	path := filepath.Join(cfg.OakestraNetRepo, "version.txt")
+	if _, err := os.Stat(path); err != nil {
+		return false, cfg.OakestraNetRepo + " has no version.txt",
+			"set OAKESTRA_NET_REPO in .env or oak-dev.yaml to a real oakestra-net checkout - only needed for root_service_manager/cluster_service_manager/netmanager"
+	}
+	return true, cfg.OakestraNetRepo, ""
 }
 
 func checkDockerCompose(cfg *config.Config) (bool, string, string) {

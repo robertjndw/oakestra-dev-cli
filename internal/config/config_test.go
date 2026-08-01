@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"oak-dev/internal/components"
 )
 
 // The example file is heavily commented, and auto-promotion rewrites it on a
@@ -168,6 +170,84 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		}
 		if !cfg.IsLive("cluster_manager") || !cfg.IsLive("scheduler") {
 			t.Errorf("aliases not canonicalised on load: %v", cfg.LiveNames())
+		}
+	})
+}
+
+func TestRepoPathResolution(t *testing.T) {
+	t.Run("defaults to a sibling checkout, resolved absolute", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := loadFrom(t, dir)
+
+		wantOakestra, err := filepath.Abs(filepath.Join(dir, "..", "oakestra"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantNet, err := filepath.Abs(filepath.Join(dir, "..", "oakestra-net"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.OakestraRepo != wantOakestra {
+			t.Errorf("OakestraRepo = %q, want %q", cfg.OakestraRepo, wantOakestra)
+		}
+		if cfg.OakestraNetRepo != wantNet {
+			t.Errorf("OakestraNetRepo = %q, want %q", cfg.OakestraNetRepo, wantNet)
+		}
+		if !filepath.IsAbs(cfg.OakestraNetRepo) {
+			t.Errorf("OakestraNetRepo = %q, want an absolute path", cfg.OakestraNetRepo)
+		}
+	})
+
+	t.Run("oak-dev.yaml sets it, relative to repoRoot", func(t *testing.T) {
+		dir := writeCfg(t, "oakestra_net_repo: ../my-oakestra-net\n")
+		cfg := loadFrom(t, dir)
+
+		want, err := filepath.Abs(filepath.Join(dir, "..", "my-oakestra-net"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.OakestraNetRepo != want {
+			t.Errorf("OakestraNetRepo = %q, want %q", cfg.OakestraNetRepo, want)
+		}
+	})
+
+	t.Run("OAKESTRA_NET_REPO env outranks oak-dev.yaml", func(t *testing.T) {
+		dir := writeCfg(t, "oakestra_net_repo: ../my-oakestra-net\n")
+		t.Setenv("OAKESTRA_NET_REPO", "/tmp/somewhere-else")
+		cfg := loadFrom(t, dir)
+
+		if cfg.OakestraNetRepo != "/tmp/somewhere-else" {
+			t.Errorf("OakestraNetRepo = %q, want the env override", cfg.OakestraNetRepo)
+		}
+	})
+
+	t.Run("RepoPath and SourceDir route by Component.Repo", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := loadFrom(t, dir)
+
+		if got := cfg.RepoPath(components.RepoOakestra); got != cfg.OakestraRepo {
+			t.Errorf("RepoPath(RepoOakestra) = %q, want %q", got, cfg.OakestraRepo)
+		}
+		if got := cfg.RepoPath(components.RepoOakestraNet); got != cfg.OakestraNetRepo {
+			t.Errorf("RepoPath(RepoOakestraNet) = %q, want %q", got, cfg.OakestraNetRepo)
+		}
+
+		nm, err := components.Resolve("netmanager")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(cfg.OakestraNetRepo, nm.SourcePath)
+		if got := cfg.SourceDir(nm); got != want {
+			t.Errorf("SourceDir(netmanager) = %q, want %q", got, want)
+		}
+
+		sched, err := components.Resolve("scheduler")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = filepath.Join(cfg.OakestraRepo, sched.SourcePath)
+		if got := cfg.SourceDir(sched); got != want {
+			t.Errorf("SourceDir(scheduler) = %q, want %q", got, want)
 		}
 	})
 }

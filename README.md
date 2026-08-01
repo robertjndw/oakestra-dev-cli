@@ -64,19 +64,28 @@ Start and stop            Work on the code          Look inside
 interchangeable. Ambiguity is an error that lists the candidates, never a
 silent guess.
 
-| Component | Alias | Language | Source |
-|---|---|---|---|
-| `system_manager` | `sm` | Python | `root_orchestrator/system-manager-python` |
-| `jwt_generator` | `jwt` | Python | `root_orchestrator/jwt-generator` |
-| `root_resource_abstractor` | `rra` | Python | `resource-abstractor` |
-| `cluster_manager` | `cm` | Python | `cluster_orchestrator/cluster-manager` |
-| `cluster_resource_abstractor` | `cra` | Python | `resource-abstractor` |
-| `scheduler` | `sched` | Go | `scheduler` (runs in both root and cluster) |
-| `nodeengine` | `ne` | Go | `go_node_engine` (the worker) |
+| Component | Alias | Language | Repo | Source |
+|---|---|---|---|---|
+| `system_manager` | `sm` | Python | oakestra | `root_orchestrator/system-manager-python` |
+| `jwt_generator` | `jwt` | Python | oakestra | `root_orchestrator/jwt-generator` |
+| `root_resource_abstractor` | `rra` | Python | oakestra | `resource-abstractor` |
+| `cluster_manager` | `cm` | Python | oakestra | `cluster_orchestrator/cluster-manager` |
+| `cluster_resource_abstractor` | `cra` | Python | oakestra | `resource-abstractor` |
+| `scheduler` | `sched` | Go | oakestra | `scheduler` (runs in both root and cluster) |
+| `nodeengine` | `ne` | Go | oakestra | `go_node_engine` (the worker) |
+| `root_service_manager` | `rsm` | Python | oakestra-net | `root-service-manager/service-manager` |
+| `cluster_service_manager` | `csm` | Python | oakestra-net | `cluster-service-manager/service-manager` |
+| `netmanager` | `nm` | Go | oakestra-net | `node-net-manager` (the worker) |
 
 Both resource abstractors share one source tree, so editing it affects both.
 `scheduler` is one binary in two containers, so `oak-dev reload sched`
-restarts both; narrow with `--stack root` when you mean one.
+restarts both; narrow with `--stack root` when you mean one. The oakestra-net
+components come from a separate checkout (`OAKESTRA_NET_REPO`, default
+`../oakestra-net`) - `oak-dev doctor` checks for it, but only as an optional
+check, since it's not needed unless you're editing one of those three.
+`netmanager` shares the worker container with `nodeengine`; `oak-dev reload
+netmanager` restarts nodeengined too, since NodeEngine only registers with
+NetManager's socket once, at startup.
 
 **Scope** is set by `--stack full|root|cluster|worker` on any command, and
 defaults to `oak-dev.yaml`'s `stack:`. The scope you pass to `up` becomes
@@ -176,7 +185,7 @@ component's language and configuration decide it:
 |---|---|---|
 | any Python service | already mounted under `gunicorn --reload`, nothing to do | instant |
 | `scheduler` | cross-compile, restart the container in place | ~5s |
-| `nodeengine` | cross-compile, restart `nodeengined` *inside* the worker | ~5s |
+| `nodeengine`, `netmanager` | cross-compile, restart the process *inside* the worker | ~5s |
 | anything, `--image` | `docker compose build` + recreate | ~30s |
 
 Reach for `--image` when the change is one no bind-mount can pick up:
@@ -189,9 +198,11 @@ advance. `--no-live` turns that back into an error. A failed build prints a red
 `BUILD FAILED` banner and leaves the old binary running rather than silently
 doing nothing.
 
-`reload nodeengine` restarts the daemon, never the container: a new container
-means a new hostname, which means `cluster_manager` registers a new node ID and
-every instance scheduled to the old one is stuck in `NODE_SCHEDULED` forever.
+`reload nodeengine`/`reload netmanager` restart their process, never the
+container: a new container means a new hostname, which means `cluster_manager`
+registers a new node ID and every instance scheduled to the old one is stuck
+in `NODE_SCHEDULED` forever. `reload netmanager` also restarts `nodeengined`,
+since NodeEngine only registers with NetManager's socket once, at startup.
 
 ### `debug`
 
@@ -277,7 +288,7 @@ and instance state it reports, then a container table and the service URLs.
 ```
 oak-dev doctor [--fix]
 ```
-Runs nine preflight checks and prints a fix for anything red. Checks marked
+Runs ten preflight checks and prints a fix for anything red. Checks marked
 `(optional)` only gate one command and don't fail the run. `--fix` repairs what
 it can instead of only describing it: creates the pytest venv, generates
 `proto/*_pb2.py` into your oakestra checkout (needed before live-mounting
@@ -350,11 +361,12 @@ powershell --help`.
 
 Copy `oak-dev.yaml.example`. Every key has a default, so an absent file still
 works: full stack, nothing mounted from source. `.env` overrides the settings
-both files cover (`OAKESTRA_REPO`, `CLUSTER_NAME`, `CLUSTER_LOCATION`,
-`LIB_BRANCH`, `NETMANAGER_VERSION`).
+both files cover (`OAKESTRA_REPO`, `OAKESTRA_NET_REPO`, `CLUSTER_NAME`,
+`CLUSTER_LOCATION`, `LIB_BRANCH`, `NETMANAGER_VERSION`).
 
 ```yaml
 oakestra_repo: ../oakestra
+oakestra_net_repo: ../oakestra-net  # only for root_service_manager/cluster_service_manager/netmanager
 libs_repo: null                # optional: local oakestra_utils_library checkout
 cluster: {name: test-cluster, location: "52.5200,13.4050,100"}
 workers: 1
@@ -516,6 +528,7 @@ for the settings it covers):
 | Variable | Default | Purpose |
 |---|---|---|
 | `OAKESTRA_REPO` | `../oakestra` | Path to the oakestra checkout to test |
+| `OAKESTRA_NET_REPO` | `../oakestra-net` | Path to the oakestra-net checkout, for `root_service_manager`/`cluster_service_manager`/`netmanager` |
 | `LIB_BRANCH` | `develop` | Branch of the shared Python libraries used in image builds |
 | `NETMANAGER_VERSION` | `alpha-` + contents of `version.txt` | NetManager release baked into the worker (develop maps to alpha tags) |
 | `CLUSTER_NAME` | `test-cluster` | Cluster name registered at the root |

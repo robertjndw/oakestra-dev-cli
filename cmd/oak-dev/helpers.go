@@ -70,10 +70,11 @@ func ownArgCount(cmd *cobra.Command, args []string) int {
 	return len(args)
 }
 
-// shortSrc renders a component's source directory relative to the oakestra
-// checkout, for "running from ..." messages.
+// shortSrc renders a component's source directory relative to the parent of
+// its checkout (oakestra or oakestra-net), for "running from ..." messages.
 func shortSrc(cfg *config.Config, c components.Component) string {
-	if rel, err := filepath.Rel(filepath.Dir(cfg.OakestraRepo), filepath.Join(cfg.OakestraRepo, c.SourcePath)); err == nil {
+	repo := cfg.RepoPath(c.Repo)
+	if rel, err := filepath.Rel(filepath.Dir(repo), cfg.SourceDir(c)); err == nil {
 		return rel
 	}
 	return c.SourcePath

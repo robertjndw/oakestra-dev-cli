@@ -110,6 +110,7 @@ func Env(cfg *config.Config) []string {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 	set("OAKESTRA_REPO", cfg.OakestraRepo)
+	set("OAKESTRA_NET_REPO", cfg.OakestraNetRepo)
 	set("OAK_DEV_ROOT", cfg.RepoRoot)
 	set("SYSTEM_MANAGER_URL", cfg.SystemManagerURL)
 	set("CLUSTER_ADDRESS", cfg.ClusterAddr)

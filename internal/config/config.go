@@ -36,6 +36,7 @@ type VersionsCfg struct {
 // fileConfig is the raw shape of oak-dev.yaml.
 type fileConfig struct {
 	OakestraRepo string      `yaml:"oakestra_repo"`
+	NetRepo      string      `yaml:"oakestra_net_repo"`
 	LibsRepo     string      `yaml:"libs_repo"`
 	Cluster      ClusterCfg  `yaml:"cluster"`
 	Workers      int         `yaml:"workers"`
@@ -50,6 +51,7 @@ type Config struct {
 	RepoRoot string // absolute path to this repo (oakestra-macos-testing checkout)
 
 	OakestraRepo      string // absolute
+	OakestraNetRepo   string // absolute
 	LibsRepo          string // absolute, or "" if not set
 	ClusterName       string
 	ClusterAddr       string // container name the root reaches this cluster back on
@@ -94,6 +96,7 @@ func Load(repoRoot string) (*Config, error) {
 
 	fc := fileConfig{
 		OakestraRepo: "../oakestra",
+		NetRepo:      "../oakestra-net",
 		Cluster:      ClusterCfg{Name: "test-cluster", Location: "52.5200,13.4050,100"},
 		Workers:      1,
 		Stack:        "full",
@@ -124,6 +127,15 @@ func Load(repoRoot string) (*Config, error) {
 		oakestraRepo = filepath.Join(repoRoot, oakestraRepo)
 	}
 	oakestraRepo, err = filepath.Abs(oakestraRepo)
+	if err != nil {
+		return nil, err
+	}
+
+	oakestraNetRepo := getenv("OAKESTRA_NET_REPO", fc.NetRepo)
+	if !filepath.IsAbs(oakestraNetRepo) {
+		oakestraNetRepo = filepath.Join(repoRoot, oakestraNetRepo)
+	}
+	oakestraNetRepo, err = filepath.Abs(oakestraNetRepo)
 	if err != nil {
 		return nil, err
 	}
@@ -191,6 +203,7 @@ func Load(repoRoot string) (*Config, error) {
 	cfg := &Config{
 		RepoRoot:          repoRoot,
 		OakestraRepo:      oakestraRepo,
+		OakestraNetRepo:   oakestraNetRepo,
 		LibsRepo:          libsRepo,
 		ClusterName:       getenv("CLUSTER_NAME", fc.Cluster.Name),
 		ClusterAddr:       getenv("CLUSTER_ADDRESS", "cluster_manager"),
@@ -215,6 +228,22 @@ func Load(repoRoot string) (*Config, error) {
 // name must be canonical - resolve through components.Resolve first.
 func (c *Config) IsLive(name string) bool {
 	return c.Live[name]
+}
+
+// RepoPath returns the absolute checkout path for the given component repo.
+func (c *Config) RepoPath(r components.Repo) string {
+	if r == components.RepoOakestraNet {
+		return c.OakestraNetRepo
+	}
+	return c.OakestraRepo
+}
+
+// SourceDir returns the absolute path to a component's source tree - its
+// SourcePath resolved against the checkout named by its Repo. This is the one
+// place that join happens, so build/watch/shortSrc never have to know there's
+// more than one possible repo.
+func (c *Config) SourceDir(comp components.Component) string {
+	return filepath.Join(c.RepoPath(comp.Repo), comp.SourcePath)
 }
 
 // LiveNames returns the live set in a stable order. cfg.Live is a map, so

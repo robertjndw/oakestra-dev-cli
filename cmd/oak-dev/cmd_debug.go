@@ -89,7 +89,7 @@ root and cluster stacks), narrow it with --stack.`,
 				return err
 			}
 			fmt.Printf("oak-dev: attach from VS Code (.vscode/launch.json) or any DAP client on localhost:%d.\n", t.DebugPort)
-			if c.Name == components.NodeEngineName {
+			if len(t.InPlaceRestart) > 0 {
 				// reload deliberately never recreates the worker, so it can't
 				// undo this one - see the comment on reconcile().
 				fmt.Printf("         `oak-dev up --stack worker` detaches it again (this recreates the\n" +

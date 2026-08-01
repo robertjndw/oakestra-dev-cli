@@ -18,6 +18,17 @@ const (
 	KindGo     Kind = "go"
 )
 
+// Repo identifies which local checkout a component's SourcePath is relative
+// to. Every component used to implicitly mean $OAKESTRA_REPO; the
+// oakestra-net components (root_service_manager, cluster_service_manager,
+// netmanager) live in a separate checkout instead.
+type Repo string
+
+const (
+	RepoOakestra    Repo = "oakestra"
+	RepoOakestraNet Repo = "oakestra-net"
+)
+
 // Stack names, matching the three compose projects.
 const (
 	StackRoot    = "root"
@@ -64,6 +75,14 @@ type Target struct {
 	DebugOverride string
 	// DebugPort is the host-published port for `oak-dev debug`.
 	DebugPort int
+	// InPlaceRestart, when set, is the command `reload` execs inside the
+	// container instead of `docker compose restart <container>` - for targets
+	// where recreating (or even stopping) the container is unsafe. Currently
+	// just nodeengine and netmanager, both living in the worker container:
+	// recreating it mints a new hostname, which cluster_manager treats as a
+	// new node ID, stranding any instance scheduled to the old one in
+	// NODE_SCHEDULED forever.
+	InPlaceRestart []string
 }
 
 // Component is one editable piece of Oakestra source.
@@ -74,25 +93,47 @@ type Component struct {
 	// long snake_case names a two- or three-letter spelling worth typing.
 	Aliases []string
 	Kind    Kind
-	// SourcePath is relative to $OAKESTRA_REPO.
+	// Repo is which local checkout SourcePath is relative to. Every registry
+	// entry must set this explicitly (enforced by TestRegistryInvariants) -
+	// there is no implicit default, so a missing Repo is a build error rather
+	// than a silent path bug.
+	Repo Repo
+	// SourcePath is relative to the checkout named by Repo.
 	SourcePath string
 	// GoMain is the main package/file to build, relative to SourcePath.
 	// Only set for Kind == KindGo with a single build unit (scheduler).
 	GoMain string
 	// BinName is the output binary name under build/linux_<arch>/.
 	BinName string
-	Targets []Target
+	// VersionVar, if set, is the ldflags -X target stamped with "dev" at
+	// build time (e.g. "NetManager/cmd.Version"), so `<bin> version` reports
+	// something other than the upstream default. Empty means no stamping.
+	VersionVar string
+	// PrebuiltImage means this component's container has no `build:` section
+	// of its own in any compose chain - it's a pinned upstream image (GHCR),
+	// not something built from a local Dockerfile. `oak-dev reload --image`
+	// can't do anything useful for it and errors instead of shelling out to a
+	// `docker compose build` that would fail confusingly.
+	PrebuiltImage bool
+	Targets       []Target
 }
 
 // NodeEngine needs two binaries (the CLI used only for config, and the
-// daemon), built specially - see internal/goexec.BuildNodeEngine.
+// daemon), built specially - see internal/build.buildNodeEngine.
 const NodeEngineName = "nodeengine"
+
+// NetManagerName is the worker's overlay-networking daemon. It shares the
+// worker container with NodeEngine (see the nodeengine entry below) and its
+// InPlaceRestart also bounces nodeengined, since NodeEngine only registers
+// with NetManager's unix socket once, at startup.
+const NetManagerName = "netmanager"
 
 var registry = []Component{
 	{
 		Name:       "system_manager",
 		Aliases:    []string{"sm"},
 		Kind:       KindPython,
+		Repo:       RepoOakestra,
 		SourcePath: "root_orchestrator/system-manager-python",
 		Targets: []Target{{
 			Stack: StackRoot, Container: "system_manager",
@@ -105,6 +146,7 @@ var registry = []Component{
 		Name:       "jwt_generator",
 		Aliases:    []string{"jwt"},
 		Kind:       KindPython,
+		Repo:       RepoOakestra,
 		SourcePath: "root_orchestrator/jwt-generator",
 		Targets: []Target{{
 			Stack: StackRoot, Container: "jwt_generator",
@@ -117,6 +159,7 @@ var registry = []Component{
 		Name:       "root_resource_abstractor",
 		Aliases:    []string{"rra"},
 		Kind:       KindPython,
+		Repo:       RepoOakestra,
 		SourcePath: "resource-abstractor",
 		Targets: []Target{{
 			Stack: StackRoot, Container: "root_resource_abstractor",
@@ -129,6 +172,7 @@ var registry = []Component{
 		Name:       "cluster_manager",
 		Aliases:    []string{"cm"},
 		Kind:       KindPython,
+		Repo:       RepoOakestra,
 		SourcePath: "cluster_orchestrator/cluster-manager",
 		Targets: []Target{{
 			Stack: StackCluster, Container: "cluster_manager",
@@ -141,6 +185,7 @@ var registry = []Component{
 		Name:       "cluster_resource_abstractor",
 		Aliases:    []string{"cra"},
 		Kind:       KindPython,
+		Repo:       RepoOakestra,
 		SourcePath: "resource-abstractor",
 		Targets: []Target{{
 			Stack: StackCluster, Container: "cluster_resource_abstractor",
@@ -153,6 +198,7 @@ var registry = []Component{
 		Name:       "scheduler",
 		Aliases:    []string{"sched"},
 		Kind:       KindGo,
+		Repo:       RepoOakestra,
 		SourcePath: "scheduler",
 		GoMain:     "./cmd",
 		BinName:    "scheduler",
@@ -172,12 +218,72 @@ var registry = []Component{
 		// things that made the old surface hard to reason about.
 		Aliases:    []string{"ne"},
 		Kind:       KindGo,
+		Repo:       RepoOakestra,
 		SourcePath: "go_node_engine",
 		BinName:    "nodeengined", // the daemon is the reload/debug target; NodeEngine (CLI) is built alongside it
 		Targets: []Target{
 			{Stack: StackWorker, Container: "worker",
 				LiveOverride:  "override-live-worker.yml",
-				DebugOverride: "override-debug-worker.yml", DebugPort: 2347},
+				DebugOverride: "override-debug-worker.yml", DebugPort: 2347,
+				InPlaceRestart: []string{"pkill", "nodeengined"},
+			},
+		},
+	},
+	{
+		Name:          "root_service_manager",
+		Aliases:       []string{"rsm"},
+		Kind:          KindPython,
+		Repo:          RepoOakestraNet,
+		SourcePath:    "root-service-manager/service-manager",
+		PrebuiltImage: true,
+		Targets: []Target{{
+			// Port is 10099, not the image's default MY_PORT=10100: upstream
+			// root compose overrides it, and system_manager reaches this
+			// service via NET_PLUGIN_PORT=10099 (see compose/override-live-
+			// root_service_manager.yml for why it's hardcoded there too).
+			Stack: StackRoot, Container: "root_service_manager",
+			Module: "oak_root_sm:app", Port: 10099,
+			LiveOverride:  "override-live-root_service_manager.yml",
+			DebugOverride: "override-debug-root_service_manager.yml", DebugPort: 5683,
+		}},
+	},
+	{
+		Name:          "cluster_service_manager",
+		Aliases:       []string{"csm"},
+		Kind:          KindPython,
+		Repo:          RepoOakestraNet,
+		SourcePath:    "cluster-service-manager/service-manager",
+		PrebuiltImage: true,
+		Targets: []Target{{
+			// Runs inside cluster_manager's network namespace (see
+			// compose/override-cluster-servicemanager.yml) - its debug port
+			// is published on cluster_manager, not on this container.
+			Stack: StackCluster, Container: "cluster_service_manager",
+			Module: "service_manager:app", Port: 10110,
+			LiveOverride:  "override-live-cluster_service_manager.yml",
+			DebugOverride: "override-debug-cluster_service_manager.yml", DebugPort: 5684,
+		}},
+	},
+	{
+		Name:       NetManagerName,
+		Aliases:    []string{"nm"},
+		Kind:       KindGo,
+		Repo:       RepoOakestraNet,
+		SourcePath: "node-net-manager",
+		GoMain:     ".", // NetManager.go lives at the repo root, not under ./cmd
+		BinName:    "NetManager",
+		VersionVar: "NetManager/cmd.Version",
+		Targets: []Target{
+			{Stack: StackWorker, Container: "worker",
+				LiveOverride:  "override-live-netmanager.yml",
+				DebugOverride: "override-debug-netmanager.yml", DebugPort: 2348,
+				// -x: exact match. A bare `pkill NetManager` would also match
+				// the `dlv exec ... /oak-bin/NetManager` supervisor under
+				// `oak-dev debug netmanager`. nodeengined is bounced too: it
+				// dials NetManager's unix socket once at startup and won't
+				// re-handshake on its own.
+				InPlaceRestart: []string{"sh", "-c", "pkill -x NetManager; sleep 2; pkill nodeengined"},
+			},
 		},
 	},
 }

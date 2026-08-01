@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -161,11 +160,15 @@ func watchSources(cfg *config.Config, watched []components.Component, self, test
 			continue
 		}
 
-		srcDir := filepath.Join(cfg.OakestraRepo, c.SourcePath)
+		srcDir := cfg.SourceDir(c)
 		inner := fmt.Sprintf("%q reload %q", self, c.Name)
-		if c.Name == components.NodeEngineName {
+		// Any component living in the worker container (nodeengine,
+		// netmanager) must not be touched mid-suite: restarting either one
+		// disrupts in-flight deployments, and recreating the container mints
+		// a new node ID that strands scheduled instances (see CLAUDE.md).
+		if len(c.InStack(components.StackWorker)) > 0 {
 			lock := testsuite.LockPath(cfg)
-			inner = fmt.Sprintf("if [ -f %q ]; then echo 'oak-dev: skipping nodeengine reload - oak-dev test is running (never restart the worker mid-suite)'; else %s; fi", lock, inner)
+			inner = fmt.Sprintf("if [ -f %q ]; then echo 'oak-dev: skipping %s reload - oak-dev test is running (never restart the worker mid-suite)'; else %s; fi", lock, c.Name, inner)
 		}
 		if testMode == "smoke" {
 			inner = fmt.Sprintf("%s && %q test --smoke", inner, self)

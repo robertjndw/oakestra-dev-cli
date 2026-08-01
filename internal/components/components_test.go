@@ -24,6 +24,9 @@ func TestResolve(t *testing.T) {
 		{in: "sched", want: "scheduler"},
 		{in: "ne", want: "nodeengine"},
 		{in: "jwt", want: "jwt_generator"},
+		{in: "rsm", want: "root_service_manager"},
+		{in: "csm", want: "cluster_service_manager"},
+		{in: "nm", want: "netmanager"},
 
 		// case and separator normalisation
 		{in: "Cluster-Manager", want: "cluster_manager"},
@@ -35,7 +38,8 @@ func TestResolve(t *testing.T) {
 		{in: "cluster-res", want: "cluster_resource_abstractor"},
 		{in: "node", want: "nodeengine"},
 		{in: "jwt_gen", want: "jwt_generator"},
-		{in: "root", want: "root_resource_abstractor"},
+		{in: "root_res", want: "root_resource_abstractor"},
+		{in: "root_serv", want: "root_service_manager"},
 
 		// an exact alias must win over being a prefix of other things
 		{in: "sm", want: "system_manager"},
@@ -44,6 +48,7 @@ func TestResolve(t *testing.T) {
 		{in: "c", errs: "ambiguous"},
 		{in: "cluster", errs: "ambiguous"},
 		{in: "s", errs: "ambiguous"},
+		{in: "root", errs: "ambiguous"},
 
 		// unknown
 		{in: "schedulerr", errs: "unknown component"},
@@ -102,6 +107,9 @@ func TestRegistryInvariants(t *testing.T) {
 			seen[normalize(key)] = c.Name
 		}
 
+		if c.Repo == "" {
+			t.Errorf("%s has no Repo", c.Name)
+		}
 		if len(c.Targets) == 0 {
 			t.Errorf("%s has no targets", c.Name)
 		}
@@ -167,8 +175,8 @@ func TestByContainer(t *testing.T) {
 
 func TestComplete(t *testing.T) {
 	got := Complete("cluster")
-	if len(got) != 2 {
-		t.Fatalf("Complete(\"cluster\") returned %d candidates, want 2: %v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("Complete(\"cluster\") returned %d candidates, want 3: %v", len(got), got)
 	}
 	// Completion must offer the canonical name, with the alias as the description.
 	if !strings.HasPrefix(got[0], "cluster_manager\t") {
