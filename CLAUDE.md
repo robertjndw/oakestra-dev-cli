@@ -17,7 +17,8 @@ oak-dev dev                          # start everything, watch for edits, stream
 oak-dev up / oak-dev down            # start/stop (--stack worker for a subset)
 oak-dev test                         # full suite (starts the stack if needed)
 oak-dev test --smoke                 # health + registration only
-oak-dev --help                       # all eleven commands, grouped
+oak-dev --help                       # all twelve commands, grouped
+oak-dev config                       # print resolved settings; `config set <key> <value>` edits oak-dev.yaml
 
 # Single test file / single test - pass through with --
 oak-dev test -- tests/test_03_deployment.py

@@ -43,7 +43,7 @@ runs are fast thanks to the Docker layer cache - and a service in
 Everything is `oak-dev`. The `Makefile` only installs it and drives the
 OrbStack VM (see [Real worker in an OrbStack VM](#real-worker-in-an-orbstack-vm)).
 
-## The eleven commands
+## The twelve commands
 
 ```
 Start and stop            Work on the code          Look inside
@@ -53,6 +53,7 @@ Start and stop            Work on the code          Look inside
                             test
                                                     Set up
                                                       doctor
+                                                      config
 ```
 
 `oak-dev --help` groups them exactly like this, and every command has a
@@ -285,14 +286,42 @@ and normally only exist after an image build), and points the `oak` CLI at this
 stack. The last two write outside this repo, so `--fix` names every file and
 setting it touches.
 
+### `config`
+
+```
+oak-dev config
+oak-dev config get <key>
+oak-dev config set <key> <value>
+```
+Reads or writes `oak-dev.yaml` settings without opening the file: `cluster.name`,
+`cluster.location`, `workers`, `stack`, `oakestra_repo`, `libs_repo`,
+`profiles.dashboard`/`observability`/`addons`, `versions.netmanager`,
+`versions.lib_branch`. With no subcommand, prints every key's resolved value.
+`set` edits `oak-dev.yaml` in place, keeping its comments, and warns if a
+`.env`/environment variable (or, for `stack`, the sticky scope from an earlier
+`up`/`down --stack`) currently outranks the value it just wrote. `live:` isn't
+here - `reload`/`debug` already manage it.
+
 ### Shell completion
 
 ```bash
-oak-dev completion fish > ~/.config/fish/completions/oak-dev.fish
-oak-dev completion --help    # bash, zsh, fish, powershell
+oak-dev completion install          # writes the script for $SHELL to the right place
+oak-dev completion install fish     # or name one: bash, zsh, fish
+oak-dev completion --help           # generate-only, for bash, zsh, fish, powershell
 ```
 Completes commands, component names (showing each alias), stacks, endpoints
 and live container names.
+
+`install` saves finding the file yourself: fish gets
+`~/.config/fish/completions/oak-dev.fish` (autoloaded, nothing else to do);
+zsh and bash go to Homebrew's completion directories when `brew` is on PATH
+(`$(brew --prefix)/share/zsh/site-functions/_oak-dev`,
+`$(brew --prefix)/etc/bash_completion.d/oak-dev` - already wired into fpath/
+bash-completion by Homebrew itself), otherwise `~/.zfunc/_oak-dev` or
+`~/.local/share/bash-completion/completions/oak-dev`, printing the one-time rc
+line those fallback paths need. It only ever writes that one script - never an
+rc file. powershell isn't covered by `install`; use `oak-dev completion
+powershell --help`.
 
 ## Moving from the old commands
 

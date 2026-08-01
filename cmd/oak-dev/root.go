@@ -88,8 +88,26 @@ unambiguous prefix (cluster_man). Configuration lives in oak-dev.yaml.`,
 		newShellCmd(),
 		// Set up
 		newDoctorCmd(),
+		newConfigCmd(),
 	)
+	wireCompletionInstall(root)
 	return root
+}
+
+// wireCompletionInstall adds `install` under cobra's own auto-generated
+// `completion` command. That command doesn't normally exist until Execute()
+// creates it lazily, so it's forced into being here (InitDefaultCompletionCmd
+// is safe to call early - it no-ops on a second call) purely so `install` has
+// a parent to attach to; the bash/zsh/fish/powershell children it brings are
+// exactly cobra's defaults, untouched.
+func wireCompletionInstall(root *cobra.Command) {
+	root.InitDefaultCompletionCmd()
+	for _, c := range root.Commands() {
+		if c.Name() == "completion" {
+			c.AddCommand(newCompletionInstallCmd())
+			return
+		}
+	}
 }
 
 // loadConfigInto resolves configuration once, before any subcommand runs, and
