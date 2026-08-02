@@ -64,6 +64,23 @@ Everything goes through `oak-dev`; the `Makefile` only installs it and drives
 the OrbStack VM (see
 [Real worker in an OrbStack VM (macOS only)](#real-worker-in-an-orbstack-vm-macos-only)).
 
+### Teaching an AI coding agent to drive oak-dev
+
+`oak-dev skill install` installs a portable [Agent Skill](https://agentskills.io)
+(`skills/oak-dev`) that teaches an AI coding agent - Claude Code, Codex,
+Cursor, and others - what `oak-dev` can do, without needing this README open.
+Run it from wherever you're actually working, including a sibling checkout:
+
+```bash
+cd ../oakestra && oak-dev skill install   # agent(s) auto-detected in ../oakestra
+oak-dev skill status                      # is it installed, and up to date?
+```
+
+No Go toolchain needed? The same skill installs via
+[skills.sh](https://skills.sh): `npx skills add oakestra/oakestra-macos-testing`.
+See `oak-dev skill --help` for `--global`/`--target`, and
+[skills/oak-dev/SKILL.md](skills/oak-dev/SKILL.md) for what it covers.
+
 ## Configuration reference
 
 Two files control settings, and `oak-dev config` reads/writes the first
@@ -110,7 +127,7 @@ every command.
 | `OAK_READY_TIMEOUT` | `180` | Seconds to wait for boot/registration |
 | `OAK_DEPLOY_TIMEOUT` | `300` | Seconds to wait for instances to reach RUNNING |
 
-## The twelve commands
+## The thirteen commands
 
 ```
 Start and stop            Work on the code          Look inside
@@ -121,6 +138,7 @@ Start and stop            Work on the code          Look inside
                                                     Set up
                                                       doctor
                                                       config
+                                                      skill
 ```
 
 `oak-dev --help` groups them exactly like this, and every command has a
@@ -184,6 +202,7 @@ to the commands where scoping is the main point.
 | `oak-dev doctor [--fix]` | Runs preflight checks and prints a fix for anything red. `--fix` repairs what it can: creates the pytest venv, generates protobuf stubs, points the `oak` CLI at this stack. |
 | `oak-dev config`, `oak-dev config get <key>`, `oak-dev config set <key> <value>` | Reads or writes `oak-dev.yaml` settings without opening the file. `set` edits the file in place, keeping comments, and warns if `.env` or the sticky scope outranks what it just wrote. |
 | `oak-dev completion install [shell]` | Installs shell completion (bash/zsh/fish) to the right place for your shell. `completion --help` generates a script only (also covers powershell). |
+| `oak-dev skill install\|status\|uninstall [--global] [--target auto\|claude\|agents\|all]` | Installs the `skills/oak-dev` Agent Skill into `.claude/skills` and/or `.agents/skills` (see [Teaching an AI coding agent to drive oak-dev](#teaching-an-ai-coding-agent-to-drive-oak-dev)). Works from any directory - never needs `-C` or a checkout. |
 
 **Reload mechanism by component:**
 
@@ -242,6 +261,7 @@ reason.
 ├── Makefile                    # `make install`, plus the vm-* targets
 ├── cmd/oak-dev/                # the CLI's cobra commands, one file per command
 ├── internal/                   # components registry, config, topology, target, doctor, build, ...
+├── skills/oak-dev/             # the Agent Skill `oak-dev skill install` embeds and installs
 ├── compose/worker.yml          # dockerized worker (own compose project, shared network)
 ├── compose/override-*.yml      # macOS-specific fixes + live/debug overlays
 ├── worker/                     # DinD worker image: NodeEngine + NetManager + entrypoint

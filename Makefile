@@ -51,6 +51,7 @@ install: ## Build oak-dev and put it on your PATH (PREFIX=~/.local/bin)
 	@command -v oak-dev >/dev/null 2>&1 \
 	    || echo "NOTE: $(PREFIX) is not on your PATH - add it to use 'oak-dev' directly."
 	@echo "Shell completion: oak-dev completion --help"
+	@echo "AI agent skill:   oak-dev skill install --help"
 
 build: ## Build oak-dev into ./bin without installing it
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/oak-dev ./cmd/oak-dev

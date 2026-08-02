@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 E2E testing harness for [Oakestra](https://github.com/oakestra/oakestra) on macOS. The orchestrator code is NOT here - it is built from a local `oakestra` checkout pointed to by `OAKESTRA_REPO` (default `../oakestra`, configured in `.env`/`oak-dev.yaml`). The overlay-networking components (root/cluster service managers, NetManager) come from a separate `oakestra-net` checkout, `OAKESTRA_NET_REPO` (default `../oakestra-net`) - optional, since those three components normally run from pinned GHCR images/release binaries. This repo contains only the glue: the `oak-dev` Go CLI (`cmd/oak-dev`, `internal/`) driving three Docker Compose projects, a dockerized worker image, macOS-specific compose overrides, and a pytest E2E suite. `oak-dev --help` (or README.md) is the source of truth for what it can do: partial stacks, source mounted from your working tree (no image rebuild for Python/Go edits), cross-compiling, debugger attach, and a watch+aggregated-logs `dev` command. The `Makefile` covers only `make install` and the `vm-*` OrbStack targets.
 
+This file (and the CLAUDE.md symlink to it) covers *changing this repo*. For
+*driving the CLI* - the doc an agent needs while working in `../oakestra`,
+`../oakestra-net`, or `oakestra-deploy` - see the portable skill at
+[skills/oak-dev/](skills/oak-dev/SKILL.md), installable anywhere with
+`oak-dev skill install`.
+
 ## Commands
 
 ```bash

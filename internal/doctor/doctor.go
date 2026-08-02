@@ -14,6 +14,7 @@ import (
 
 	"oak-dev/internal/components"
 	"oak-dev/internal/config"
+	"oak-dev/internal/skill"
 )
 
 // Result is the outcome of one check.
@@ -43,6 +44,7 @@ var checks = []namedCheck{
 	{"Go toolchain", "builds oak-dev itself and the cross-compiled binaries", false, checkGoToolchain},
 	{"oak CLI on PATH", "needed for `oak-dev status`", true, checkOakCLI},
 	{"stale oakestra network/volumes", "`down --volumes` exists for this", false, checkStaleNetwork},
+	{"oak-dev skill (global)", "skills/oak-dev - lets an agent drive oak-dev from other repos (../oakestra, ../oakestra-net, oakestra-deploy)", true, checkSkillInstalled},
 }
 
 // Run executes every check and returns the results in order.
@@ -232,4 +234,40 @@ func checkStaleNetwork(cfg *config.Config) (bool, string, string) {
 			"run `oak-dev down --volumes` or `docker volume prune` - stale containerd volumes accumulate across worker recreations"
 	}
 	return true, "clean", ""
+}
+
+// checkSkillInstalled is report-only: it never installs anything, including
+// under `doctor --fix` (see Fixers below) - installing into a user's home
+// directory as a side effect of a stack-health check would be surprising.
+// Run `oak-dev skill install --global` yourself to act on the fix text.
+func checkSkillInstalled(cfg *config.Config) (bool, string, string) {
+	base, err := skill.Base(skill.ScopeGlobal)
+	if err != nil {
+		return true, "could not resolve $HOME, skipping", ""
+	}
+
+	targets, err := skill.Resolve(base, "auto")
+	if err != nil {
+		return true, err.Error(), ""
+	}
+
+	var details []string
+	upToDate := false
+	for _, t := range targets {
+		s, err := skill.Status(t)
+		if err != nil {
+			details = append(details, fmt.Sprintf("%s: %v", t.Agent, err))
+			continue
+		}
+		if s == skill.UpToDate {
+			upToDate = true
+		}
+		details = append(details, fmt.Sprintf("%s: %s", t.Agent, s))
+	}
+
+	detail := strings.Join(details, ", ")
+	if !upToDate {
+		return false, detail, "run `oak-dev skill install --global`"
+	}
+	return true, detail, ""
 }

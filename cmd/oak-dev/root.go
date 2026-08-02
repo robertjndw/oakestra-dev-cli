@@ -22,6 +22,13 @@ const (
 	groupSetup   = "setup"
 )
 
+// annotationNoConfig marks a command (and, via hasNoConfigAnnotation, all of
+// its subcommands) as exempt from loadConfigInto's "is this an
+// oakestra-macos-testing checkout" requirement. `skill` and `completion` both
+// need to run from *other* repos - that's the whole point of `oak-dev skill
+// install` - so neither can require the config this repo's checkout provides.
+const annotationNoConfig = "oak-dev/no-config"
+
 // version is overridable at link time (-ldflags "-X main.version=...").
 var version = "dev"
 
@@ -89,6 +96,7 @@ unambiguous prefix (cluster_man). Configuration lives in oak-dev.yaml.`,
 		// Set up
 		newDoctorCmd(),
 		newConfigCmd(),
+		newSkillCmd(),
 	)
 	wireCompletionInstall(root)
 	return root
@@ -104,10 +112,24 @@ func wireCompletionInstall(root *cobra.Command) {
 	root.InitDefaultCompletionCmd()
 	for _, c := range root.Commands() {
 		if c.Name() == "completion" {
+			c.Annotations = map[string]string{annotationNoConfig: "true"}
 			c.AddCommand(newCompletionInstallCmd())
 			return
 		}
 	}
+}
+
+// hasNoConfigAnnotation reports whether cmd or any of its ancestors carries
+// annotationNoConfig. Cobra's Annotations aren't inherited by children, so
+// this walks up to the command that actually declared it (`skill`,
+// `completion`) rather than requiring every leaf subcommand to repeat it.
+func hasNoConfigAnnotation(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Annotations[annotationNoConfig] == "true" {
+			return true
+		}
+	}
+	return false
 }
 
 // loadConfigInto resolves configuration once, before any subcommand runs, and
@@ -116,6 +138,10 @@ func wireCompletionInstall(root *cobra.Command) {
 // unformattable and untestable.
 func loadConfigInto(stackFlag, repoRoot *string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, _ []string) error {
+		if hasNoConfigAnnotation(cmd) {
+			return nil
+		}
+
 		root := *repoRoot
 		if root == "" {
 			wd, err := os.Getwd()
