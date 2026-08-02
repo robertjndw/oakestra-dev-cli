@@ -51,6 +51,16 @@ The venv lives at `.venv` (repo root) and is created automatically by `oak-dev d
 
 `--stack full|root|cluster|worker` is a persistent flag on every command and always means *scope*. The scope passed to `up` is sticky (`.generated/stack`) until the next plain `down`; `oak-dev status` prints which scope is active and where it came from.
 
+## Developing oak-dev itself
+
+No CI and no Go lint config - `go vet`/`gofmt`/tests are the only gate:
+```bash
+go build ./... && go vet ./... && gofmt -l .
+go test ./... -race        # internal/watch and multilog are concurrent - always run with -race
+make install                # rebuild the installed binary to manually exercise a change
+```
+Tests are stdlib-only (no testify), white-box (`package x`, not `x_test`), table-driven, using `t.TempDir()`/`t.Setenv()`/`t.Helper()` - see `internal/config/config_test.go`.
+
 ## Architecture
 
 Three separate compose projects join one shared Docker network named `oakestra`, so containers resolve each other by name across projects:
@@ -94,6 +104,7 @@ Startup order is load-bearing:
 
 ## Gotchas
 
+- This is a multi-repo workspace (this repo, `../oakestra`, `../oakestra-net`, often alongside `oakestra-deploy`) - the shell's cwd persists across Bash calls independent of whichever repo the session was launched in. Verify with `pwd`/`git status` before any mutating command (`go get`, `go mod tidy`, git ops).
 - **Never restart/recreate the worker while deployment tests run.** Each new worker container registers a new node ID; instances scheduled to the old ID stay `NODE_SCHEDULED` forever and the tests time out. Stale node candidates from previous worker containers linger in the cluster DB until they age out.
 - `NETMANAGER_VERSION` defaults to `alpha-` + `$OAKESTRA_REPO/version.txt` - oakestra-net publishes develop builds only under `alpha-` tags; plain version tags may not exist.
 - Local changes to `oakestra` Python services, scheduler, and NodeEngine are tested directly, and (via `OAKESTRA_NET_REPO`) so can the three oakestra-net components (`root_service_manager`/`cluster_service_manager`/`netmanager`) - they just default to GHCR images/release binaries since most changes here don't touch that layer. The shared Python libraries are installed from the `LIB_BRANCH` GitHub branch at image build time regardless - local library edits are invisible until pushed.
@@ -105,3 +116,4 @@ Startup order is load-bearing:
 - `docker info --format '{{.Architecture}}'` reports GNU arch names (`aarch64`/`x86_64`); Go/`uname -m` on Apple Silicon reports `arm64`. Normalize both before comparing.
 - A stale exited container from an earlier session can reference a since-deleted Docker network ID, making `restart`/`up` fail with `network ... not found`. Not a code bug - `docker rm -f` the stale container(s) and retry.
 - `oak` (oakestra-cli) SLA files are JSON, not YAML (`oak application create -f fixtures/nginx.json`). Config keys: `oak config set system_manager_ip/cluster_manager_ip/cluster_name/cluster_location`, `oak config credentials <user> <pass>`.
+- `oak-dev dev`'s file watcher is in-process (`internal/watch`, fsnotify-based), replacing a former external `watchexec` dependency - don't reintroduce a shelled-out watcher; extend `internal/watch` instead.

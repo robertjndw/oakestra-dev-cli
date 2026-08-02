@@ -39,7 +39,7 @@ to the file that shell loads on startup:
   bash   $(brew --prefix)/etc/bash_completion.d/oak-dev if Homebrew is on
          PATH, otherwise ~/.local/share/bash-completion/completions/oak-dev.
          Either way this needs the bash-completion package sourced in your
-         shell - printed as a reminder, same as the watchexec check in
+         shell - printed as a reminder, same as the oak CLI check in
          ` + "`oak-dev doctor`" + `.
 
 powershell isn't handled here - see ` + "`oak-dev completion powershell --help`" + `.

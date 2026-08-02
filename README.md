@@ -22,7 +22,7 @@ itself: installing oak-dev, and driving the OrbStack VM. See
 - Go 1.22+ (builds `oak-dev` itself, plus the cross-compiled scheduler/NodeEngine binaries)
 - Python 3.10+ (for the pytest suite)
 - A local checkout of `oakestra` (sibling directory `../oakestra` by default)
-- Optional: [`watchexec`](https://watchexec.github.io) for `oak-dev dev`, the real `oak` CLI ([oakestra-cli](https://github.com/oakestra/oakestra-cli)) for `oak-dev status`, `orbctl` for the OrbStack VM path
+- Optional: the real `oak` CLI ([oakestra-cli](https://github.com/oakestra/oakestra-cli)) for `oak-dev status`, `orbctl` for the OrbStack VM path
 
 `oak-dev doctor` checks all of the above and tells you exactly what's missing.
 
@@ -174,7 +174,7 @@ to the commands where scoping is the main point.
 | `oak-dev up [--workers N]` | Builds if needed and starts every stack in scope, root → cluster → worker order. `--workers N` runs N dockerized workers. |
 | `oak-dev down [--volumes] [--yes]` | Stops the stacks in scope, in reverse order. `--volumes` also deletes the MongoDB, Redis and containerd volumes for a genuinely fresh start (prompts unless `--yes`). Clears the sticky scope. |
 | `oak-dev reset [--yes]` | The "state is weird" fix (~15s, no image work): drops every non-system database in root and cluster, flushes both redis instances, and restarts services so in-memory caches clear too. Doesn't re-register the worker. |
-| `oak-dev dev [component...] [--no-up] [--test smoke]` | The one command to start working: brings the stack up, merges logs from every stack in scope, and cross-compiles/restarts live Go components on save. Python services live-reload via `gunicorn --reload` already. `--test smoke` reruns the smoke suite after each rebuild. Requires `watchexec`. |
+| `oak-dev dev [component...] [--no-up] [--test smoke]` | The one command to start working: brings the stack up, merges logs from every stack in scope, and cross-compiles/restarts live Go components on save. Python services live-reload via `gunicorn --reload` already. `--test smoke` reruns the smoke suite after each rebuild. |
 | `oak-dev reload [component...] [--image] [--no-live]` | Makes an edit take effect - the mechanism depends on the component's language (see below). `--image` forces a full rebuild + recreate. Adds the component to `live:` automatically if it wasn't there; `--no-live` turns that into an error instead. |
 | `oak-dev debug <component> [--no-live]` | Recreates the container with a debugger attached (Delve for Go, debugpy for Python) and prints the `localhost` port to attach to (matches `.vscode/launch.json`). |
 | `oak-dev test [component] [--smoke] [--no-up] [-- args...]` | With no argument, runs the full pytest E2E suite (starts the stack unless `--no-up`). `--smoke` runs health + registration only. With a component, runs its own `go test ./...` on the host - no Docker. Anything after `--` passes straight through. |

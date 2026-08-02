@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"oak-dev/internal/multilog"
 	"oak-dev/internal/testsuite"
 	"oak-dev/internal/topology"
+	"oak-dev/internal/watch"
 )
 
 func newDevCmd() *cobra.Command {
@@ -47,11 +49,6 @@ Ctrl-C stops everything.`,
 			cfg := cfgFrom(cmd)
 			if testMode != "" && testMode != "smoke" {
 				return fmt.Errorf("--test only supports 'smoke' (never the full suite: the deployment tests are order-dependent and share state)")
-			}
-
-			if _, err := exec.LookPath("watchexec"); err != nil {
-				return fmt.Errorf("watchexec not found on PATH - required for `oak-dev dev`.\n" +
-					"Install it (brew install watchexec) or run `oak-dev doctor`")
 			}
 
 			// Bring the stack up (or just render it, with --no-up) before
@@ -149,10 +146,10 @@ func stackLogSources(files map[string][]string, cfg *config.Config, prefix strin
 	return out
 }
 
-// watchSources returns one watchexec-backed source per watched Go component:
-// on every source change it re-execs `<self> reload <component>`, guarding the
-// worker while a test run is in progress and optionally re-running the smoke
-// suite after a successful rebuild.
+// watchSources returns one file-watcher-backed source per watched Go
+// component: on every source change it re-execs `<self> reload <component>`,
+// guarding the worker while a test run is in progress and optionally
+// re-running the smoke suite after a successful rebuild.
 func watchSources(cfg *config.Config, watched []components.Component, self, testMode string) []multilog.Source {
 	var out []multilog.Source
 	for _, c := range watched {
@@ -164,26 +161,59 @@ func watchSources(cfg *config.Config, watched []components.Component, self, test
 		}
 
 		srcDir := cfg.SourceDir(c)
-		inner := fmt.Sprintf("%q reload %q", self, c.Name)
 		// Any component living in the worker container (nodeengine,
 		// netmanager) must not be touched mid-suite: restarting either one
 		// disrupts in-flight deployments, and recreating the container mints
 		// a new node ID that strands scheduled instances (see CLAUDE.md).
-		if len(c.InStack(components.StackWorker)) > 0 {
-			lock := testsuite.LockPath(cfg)
-			inner = fmt.Sprintf("if [ -f %q ]; then echo 'oak-dev: skipping %s reload - oak-dev test is running (never restart the worker mid-suite)'; else %s; fi", lock, c.Name, inner)
-		}
-		if testMode == "smoke" {
-			inner = fmt.Sprintf("%s && %q test --smoke", inner, self)
-		}
+		guarded := len(c.InStack(components.StackWorker)) > 0
 
 		out = append(out, multilog.Source{
-			Tag: "watch:" + c.Name, Dir: srcDir, Env: os.Environ(),
-			Name: "watchexec",
-			Args: []string{"-w", srcDir, "-e", "go", "--", "sh", "-c", inner},
+			Tag: "watch:" + c.Name, Dir: srcDir,
+			Func: func(ctx context.Context, w io.Writer) error {
+				return watch.Run(ctx, watch.Options{
+					Dir: srcDir,
+					Log: func(msg string) { fmt.Fprintln(w, msg) },
+				}, func() {
+					reloadOnChange(ctx, w, cfg, c, self, testMode, guarded, srcDir)
+				})
+			},
 		})
 	}
 	return out
+}
+
+// reloadOnChange runs once a debounced source change fires for component c:
+// it skips the reload while a guarded (worker-resident) component's mid-suite
+// restart would strand scheduled instances, otherwise cross-compiles/restarts
+// it via `<self> reload <c>` and optionally re-runs the smoke suite.
+func reloadOnChange(ctx context.Context, w io.Writer, cfg *config.Config, c components.Component, self, testMode string, guarded bool, srcDir string) {
+	if guarded && testsuite.IsLocked(cfg) {
+		fmt.Fprintf(w, "oak-dev: skipping %s reload - oak-dev test is running (never restart the worker mid-suite)\n", c.Name)
+		return
+	}
+	// A half-swapped binary is worse than a slightly delayed exit, so Ctrl-C
+	// lets an in-flight reload finish rather than killing it mid-rebuild or
+	// mid-`docker restart`; multilog.Run's shutdown grace period bounds how
+	// long that can take.
+	reloadCtx := context.WithoutCancel(ctx)
+	if err := runTagged(reloadCtx, w, srcDir, self, "reload", c.Name); err != nil {
+		return // runTagged already reported why; don't chain the smoke suite
+	}
+	if testMode == "smoke" {
+		_ = runTagged(reloadCtx, w, srcDir, self, "test", "--smoke")
+	}
+}
+
+// runTagged runs name with args, streaming its combined stdout/stderr into w
+// (`reload`/`test --smoke` already narrate their own failures - e.g. the
+// BUILD FAILED banner - so the only thing the caller needs back is whether
+// it succeeded).
+func runTagged(ctx context.Context, w io.Writer, dir, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Stdout = w
+	cmd.Stderr = w
+	return cmd.Run()
 }
 
 func printDevSummary(cfg *config.Config, watched []components.Component) {

@@ -54,7 +54,7 @@ root and cluster stacks), narrow it with --stack.`,
 			// same lock file, but `debug` force-recreates unconditionally
 			// below, so it needs the same guard.
 			if t.Stack == components.StackWorker {
-				if _, err := os.Stat(testsuite.LockPath(cfg)); err == nil {
+				if testsuite.IsLocked(cfg) {
 					return fmt.Errorf("oak-dev test is running - never restart/recreate the worker mid-suite (it mints a new node ID and strands scheduled instances)")
 				}
 			}

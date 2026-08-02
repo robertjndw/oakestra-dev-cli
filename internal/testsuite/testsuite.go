@@ -76,6 +76,12 @@ func run(dir, name string, args ...string) error {
 	return cmd.Run()
 }
 
+// IsLocked reports whether a test run is currently in progress.
+func IsLocked(cfg *config.Config) bool {
+	_, err := os.Stat(LockPath(cfg))
+	return err == nil
+}
+
 // Lock creates the test-in-progress marker; Unlock removes it.
 func Lock(cfg *config.Config) error {
 	if err := os.MkdirAll(filepath.Dir(LockPath(cfg)), 0o755); err != nil {

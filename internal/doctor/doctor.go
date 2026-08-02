@@ -41,7 +41,6 @@ var checks = []namedCheck{
 	{"host arch vs docker arch", "worker/Dockerfile", false, checkArch},
 	{"proto/*_pb2.py generated", "oakestra/.gitignore", false, checkProto},
 	{"Go toolchain", "builds oak-dev itself and the cross-compiled binaries", false, checkGoToolchain},
-	{"watchexec", "needed for `oak-dev dev`", true, checkWatchexec},
 	{"oak CLI on PATH", "needed for `oak-dev status`", true, checkOakCLI},
 	{"stale oakestra network/volumes", "`down --volumes` exists for this", false, checkStaleNetwork},
 }
@@ -211,13 +210,6 @@ func checkGoToolchain(cfg *config.Config) (bool, string, string) {
 		return false, "go not found", "install Go - it builds oak-dev itself, plus the cross-compiled scheduler/NodeEngine binaries"
 	}
 	return true, strings.TrimSpace(string(out)), ""
-}
-
-func checkWatchexec(cfg *config.Config) (bool, string, string) {
-	if _, err := exec.LookPath("watchexec"); err != nil {
-		return false, "not found", "brew install watchexec (or see watchexec.github.io) - only needed for `oak-dev dev`"
-	}
-	return true, "found", ""
 }
 
 func checkOakCLI(cfg *config.Config) (bool, string, string) {
