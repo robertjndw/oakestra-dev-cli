@@ -16,7 +16,6 @@ import (
 	"oak-dev/internal/config"
 	"oak-dev/internal/multilog"
 	"oak-dev/internal/testsuite"
-	"oak-dev/internal/topology"
 	"oak-dev/internal/watch"
 )
 
@@ -47,6 +46,10 @@ Ctrl-C stops everything.`,
 		ValidArgsFunction: completeComponents,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := cfgFrom(cmd)
+			tl, err := newTools(cfg)
+			if err != nil {
+				return err
+			}
 			if testMode != "" && testMode != "smoke" {
 				return fmt.Errorf("--test only supports 'smoke' (never the full suite: the deployment tests are order-dependent and share state)")
 			}
@@ -59,25 +62,19 @@ Ctrl-C stops everything.`,
 			// stacks have created it. Doing this first, rather than inside
 			// watchedComponents, avoids a "network oakestra not found" error
 			// on the very first run.
-			var files map[string][]string
-			var err error
 			if noUp {
 				fmt.Println("oak-dev: " + cfg.ScopeLine())
-				if err := ensureLiveBinaries(cfg); err != nil {
+				if err := ensureLiveBinaries(cfg, tl); err != nil {
 					return err
 				}
-				files, err = topology.Render(cfg)
-				if err != nil {
+				if err := tl.rebind(cfg); err != nil {
 					return err
 				}
-			} else {
-				files, err = runUp(cfg, true)
-				if err != nil {
-					return err
-				}
+			} else if _, err := runUp(cfg, tl, true); err != nil {
+				return err
 			}
 
-			watched, err := watchedComponents(cfg, args)
+			watched, err := watchedComponents(cfg, tl, args)
 			if err != nil {
 				return err
 			}
@@ -91,7 +88,7 @@ Ctrl-C stops everything.`,
 			defer stop()
 
 			var sources []multilog.Source
-			sources = append(sources, stackLogSources(files, cfg, "log:", 20)...)
+			sources = append(sources, stackLogSources(tl, "log:", 20)...)
 			sources = append(sources, watchSources(cfg, watched, self, testMode)...)
 
 			printDevSummary(cfg, watched)
@@ -106,7 +103,7 @@ Ctrl-C stops everything.`,
 // watchedComponents returns the Go components to watch: those named on the
 // command line, or every live one. Named components that aren't live are
 // promoted, so `oak-dev dev sched` works without editing oak-dev.yaml first.
-func watchedComponents(cfg *config.Config, args []string) ([]components.Component, error) {
+func watchedComponents(cfg *config.Config, tl *tools, args []string) ([]components.Component, error) {
 	if len(args) > 0 {
 		var out []components.Component
 		for _, a := range args {
@@ -114,7 +111,7 @@ func watchedComponents(cfg *config.Config, args []string) ([]components.Componen
 			if err != nil {
 				return nil, err
 			}
-			if err := ensureLive(cfg, c, false); err != nil {
+			if err := ensureLive(cfg, tl, c, false); err != nil {
 				return nil, err
 			}
 			out = append(out, c)
@@ -129,18 +126,16 @@ func watchedComponents(cfg *config.Config, args []string) ([]components.Componen
 // from an already-rendered topology. Shared with `oak-dev logs`, which
 // previously had its own near-identical copy that differed only in tail
 // length and tag prefix.
-func stackLogSources(files map[string][]string, cfg *config.Config, prefix string, tail int) []multilog.Source {
+func stackLogSources(tl *tools, prefix string, tail int) []multilog.Source {
 	var out []multilog.Source
-	for _, stack := range upOrder {
-		f, ok := files[stack]
-		if !ok {
+	for _, stack := range tl.compose.Stacks() {
+		spec, err := tl.compose.StackLogSpec(stack, compose.LogOpts{Tail: tail, Follow: true})
+		if err != nil {
 			continue
 		}
-		args := append([]string{"compose"}, compose.FileArgs(f)...)
-		args = append(args, "logs", "-f", fmt.Sprintf("--tail=%d", tail))
 		out = append(out, multilog.Source{
-			Tag: prefix + stack, Dir: cfg.RepoRoot, Env: compose.Env(cfg),
-			Name: "docker", Args: args,
+			Tag: prefix + stack, Dir: spec.Dir, Env: spec.Env,
+			Name: spec.Name, Args: spec.Args,
 		})
 	}
 	return out

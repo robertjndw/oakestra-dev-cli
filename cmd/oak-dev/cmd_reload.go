@@ -7,10 +7,8 @@ import (
 
 	"oak-dev/internal/build"
 	"oak-dev/internal/components"
-	"oak-dev/internal/compose"
 	"oak-dev/internal/config"
 	"oak-dev/internal/debugstate"
-	"oak-dev/internal/topology"
 )
 
 func newReloadCmd() *cobra.Command {
@@ -44,6 +42,10 @@ With no arguments, reloads every component in live:.`,
 		ValidArgsFunction: completeComponents,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := cfgFrom(cmd)
+			tl, err := newTools(cfg)
+			if err != nil {
+				return err
+			}
 
 			targets, err := reloadSet(cfg, args)
 			if err != nil {
@@ -58,7 +60,7 @@ With no arguments, reloads every component in live:.`,
 			// reporting; sweeping the whole live set past one is not.
 			explicit := len(args) > 0
 			for _, c := range targets {
-				if err := reloadComponent(cfg, c, image, noLive, explicit); err != nil {
+				if err := reloadComponent(cfg, tl, c, image, noLive, explicit); err != nil {
 					return err
 				}
 			}
@@ -88,7 +90,7 @@ func reloadSet(cfg *config.Config, args []string) ([]components.Component, error
 	return out, nil
 }
 
-func reloadComponent(cfg *config.Config, c components.Component, image, noLive, explicit bool) error {
+func reloadComponent(cfg *config.Config, tl *tools, c components.Component, image, noLive, explicit bool) error {
 	inScope := inScopeTargets(cfg, c)
 	if len(inScope) == 0 {
 		if !explicit {
@@ -108,30 +110,32 @@ func reloadComponent(cfg *config.Config, c components.Component, image, noLive, 
 	// An image rebuild replaces the baked copy, so it works whether or not the
 	// component is live. Everything else needs the bind-mount to be in place.
 	if !image {
-		if err := ensureLive(cfg, c, noLive); err != nil {
+		if err := ensureLive(cfg, tl, c, noLive); err != nil {
 			return err
 		}
 	}
 
-	files, err := topology.Render(cfg)
-	if err != nil {
+	// Renders the .generated/ artifacts and points the compose client at the
+	// chain that is actually in effect now - ensureLive above may have just
+	// added an overlay to it.
+	if err := tl.rebind(cfg); err != nil {
 		return err
 	}
 
 	if image {
-		return reloadViaImage(cfg, c, inScope, files)
+		return reloadViaImage(cfg, tl, c, inScope)
 	}
 
 	switch c.Kind {
 	case components.KindPython:
-		if err := reconcile(cfg, inScope, files); err != nil {
+		if err := reconcile(cfg, tl, inScope); err != nil {
 			return err
 		}
 		fmt.Printf("oak-dev: %s runs from %s under gunicorn --reload - your edit is already live.\n",
 			c.Name, shortSrc(cfg, c))
 		return nil
 	case components.KindGo:
-		return reloadViaBinary(cfg, c, inScope, files)
+		return reloadViaBinary(cfg, tl, c, inScope)
 	}
 	return fmt.Errorf("%s has an unknown kind %q", c.Name, c.Kind)
 }
@@ -148,16 +152,12 @@ func reloadComponent(cfg *config.Config, c components.Component, image, noLive, 
 // strands every already-scheduled instance in NODE_SCHEDULED. Coming back
 // from `debug nodeengine`/`debug netmanager` therefore needs an explicit
 // `oak-dev up`.
-func reconcile(cfg *config.Config, targets []components.Target, files map[string][]string) error {
+func reconcile(cfg *config.Config, tl *tools, targets []components.Target) error {
 	for _, t := range targets {
 		if len(t.InPlaceRestart) > 0 {
 			continue
 		}
-		f := files[t.Stack]
-		if f == nil {
-			continue
-		}
-		if err := compose.Run(cfg, f, "up", "-d", t.Container); err != nil {
+		if err := tl.compose.Recreate(ref(t)); err != nil {
 			return fmt.Errorf("reconciling %s: %w", t.Container, err)
 		}
 		// Whatever `debug` attached to this container is gone now (that's the
@@ -200,9 +200,9 @@ func forgetDebug(cfg *config.Config, stack, container string) error {
 
 // reloadViaBinary cross-compiles on the host and swaps the binary underneath a
 // running container, without recreating it.
-func reloadViaBinary(cfg *config.Config, c components.Component, targets []components.Target, files map[string][]string) error {
+func reloadViaBinary(cfg *config.Config, tl *tools, c components.Component, targets []components.Target) error {
 	fmt.Printf("oak-dev: cross-compiling %s for linux/%s...\n", c.Name, cfg.GOARCH)
-	if _, err := build.Build(cfg, c, build.Options{}); err != nil {
+	if _, err := tl.build.Build(c, build.Options{}); err != nil {
 		// Loud on purpose: the container keeps serving the previous binary, so
 		// a quiet failure means testing stale code and not knowing it.
 		fmt.Printf("\033[41;97m BUILD FAILED \033[0m %s did not compile - the OLD binary is still running (stale).\n", c.Name)
@@ -210,16 +210,12 @@ func reloadViaBinary(cfg *config.Config, c components.Component, targets []compo
 	}
 
 	// Undo any debug overlay before restarting; a plain restart would keep it.
-	if err := reconcile(cfg, targets, files); err != nil {
+	if err := reconcile(cfg, tl, targets); err != nil {
 		return err
 	}
 
 	var inPlace, recreated []components.Target
 	for _, t := range targets {
-		f := files[t.Stack]
-		if f == nil {
-			continue
-		}
 		if len(t.InPlaceRestart) > 0 {
 			// Restart the process inside the container, never the container
 			// itself. docker-entrypoint.sh supervises it in a loop precisely
@@ -227,14 +223,13 @@ func reloadViaBinary(cfg *config.Config, c components.Component, targets []compo
 			// means cluster_manager registers a new node ID and every
 			// instance scheduled to the old one is stuck in NODE_SCHEDULED
 			// forever.
-			execArgs := append([]string{"exec", "-T", t.Container}, t.InPlaceRestart...)
-			if out, err := compose.Output(cfg, f, execArgs...); err != nil {
+			if out, err := tl.compose.Capture(ref(t), t.InPlaceRestart...); err != nil {
 				return fmt.Errorf("restarting %s in %s: %w\n%s", c.Name, t.Container, err, out)
 			}
 			inPlace = append(inPlace, t)
 			continue
 		}
-		if err := compose.Run(cfg, f, "restart", t.Container); err != nil {
+		if err := tl.compose.Restart(ref(t)); err != nil {
 			return fmt.Errorf("restarting %s: %w", t.Container, err)
 		}
 		recreated = append(recreated, t)
@@ -250,7 +245,7 @@ func reloadViaBinary(cfg *config.Config, c components.Component, targets []compo
 }
 
 // reloadViaImage is the escape hatch for changes no mount can pick up.
-func reloadViaImage(cfg *config.Config, c components.Component, targets []components.Target, files map[string][]string) error {
+func reloadViaImage(cfg *config.Config, tl *tools, c components.Component, targets []components.Target) error {
 	// A live Go component's container runs /oak-bin/<binary> from the host
 	// mount, which shadows whatever the rebuild just baked into the image. So
 	// --image alone would recreate the container onto the *old* host binary and
@@ -260,22 +255,18 @@ func reloadViaImage(cfg *config.Config, c components.Component, targets []compon
 	if c.Kind == components.KindGo && cfg.IsLive(c.Name) {
 		fmt.Printf("oak-dev: %s is live, so /oak-bin shadows the image - cross-compiling for linux/%s too...\n",
 			c.Name, cfg.GOARCH)
-		if _, err := build.Build(cfg, c, build.Options{}); err != nil {
+		if _, err := tl.build.Build(c, build.Options{}); err != nil {
 			fmt.Printf("\033[41;97m BUILD FAILED \033[0m %s did not compile - the OLD binary is still running (stale).\n", c.Name)
 			return err
 		}
 	}
 
 	for _, t := range targets {
-		f := files[t.Stack]
-		if f == nil {
-			continue
-		}
 		fmt.Printf("oak-dev: rebuilding the %s image...\n", t.Container)
-		if err := compose.Run(cfg, f, "build", t.Container); err != nil {
+		if err := tl.compose.Build(ref(t)); err != nil {
 			return fmt.Errorf("building %s: %w", t.Container, err)
 		}
-		if err := compose.Run(cfg, f, "up", "-d", t.Container); err != nil {
+		if err := tl.compose.Recreate(ref(t)); err != nil {
 			return fmt.Errorf("recreating %s: %w", t.Container, err)
 		}
 		// Recreated from the plain topology, exactly like reconcile does, so
@@ -295,7 +286,7 @@ func reloadViaImage(cfg *config.Config, c components.Component, targets []compon
 // serving your working tree rather than the baked image. This used to be an
 // error telling you to go edit a YAML file and re-run `up`; doing it here is
 // what lets `live:` stop being something you have to know about.
-func ensureLive(cfg *config.Config, c components.Component, noLive bool) error {
+func ensureLive(cfg *config.Config, tl *tools, c components.Component, noLive bool) error {
 	if cfg.IsLive(c.Name) {
 		return nil
 	}
@@ -313,24 +304,19 @@ func ensureLive(cfg *config.Config, c components.Component, noLive bool) error {
 			c.Name, joinNames(cfg.LiveNames()))
 	}
 
-	// The live bind-mount is a compose override, so the container has to be
-	// recreated once for it to take effect.
-	files, err := topology.Render(cfg)
-	if err != nil {
+	// The live bind-mount is a compose override, so the topology has changed
+	// and the container has to be recreated once for it to take effect.
+	if err := tl.rebind(cfg); err != nil {
 		return err
 	}
 	if c.Kind == components.KindGo {
-		if err := ensureLiveBinaries(cfg); err != nil {
+		if err := ensureLiveBinaries(cfg, tl); err != nil {
 			return err
 		}
 	}
 	for _, t := range inScopeTargets(cfg, c) {
-		f := files[t.Stack]
-		if f == nil {
-			continue
-		}
 		fmt.Printf("oak-dev: recreating %s from %s...\n", t.Container, shortSrc(cfg, c))
-		if err := compose.Run(cfg, f, "up", "-d", t.Container); err != nil {
+		if err := tl.compose.Recreate(ref(t)); err != nil {
 			return fmt.Errorf("recreating %s: %w", t.Container, err)
 		}
 	}

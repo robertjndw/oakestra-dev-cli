@@ -8,16 +8,14 @@ package compose
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"oak-dev/internal/components"
 	"oak-dev/internal/config"
+	"oak-dev/internal/proc"
 )
 
-// FileArgs turns a file chain into flat -f/<path> pairs, in order. Exported
-// because the commands that build their own `docker compose` invocations
-// (logs, dev) need it too, and used to each keep a private copy.
+// FileArgs turns a file chain into flat -f/<path> pairs, in order.
 func FileArgs(files []string) []string {
 	var args []string
 	for _, f := range files {
@@ -143,28 +141,68 @@ func Env(cfg *config.Config) []string {
 	return env
 }
 
-// newCmd builds the `docker compose <files> <args...>` command shared by Run
-// and Output, before they diverge on stdio wiring.
-func newCmd(cfg *config.Config, files []string, args ...string) *exec.Cmd {
+// Client runs docker compose. It holds the Runner rather than reaching for
+// os/exec directly, which is what lets a test substitute a proc.Recorder and
+// assert on the commands a code path would have issued.
+//
+// Callers receive one rather than calling a package-level function, so there
+// is no process-starting global to reassign in tests.
+type Client struct {
+	cfg    *config.Config
+	runner proc.Runner
+	// topo is the rendered per-stack file chain, bound once at construction.
+	// A stack missing from it is out of the current scope, which is the one
+	// place that error is now produced.
+	topo map[string][]string
+	// overlays are extra files layered onto one stack's chain by
+	// WithOverlays, for `oak-dev debug`.
+	overlays map[string][]string
+}
+
+// stackOrder is the order stacks must start in, mirrored here so Stacks() can
+// report the scope in a stable order.
+var stackOrder = []string{components.StackRoot, components.StackCluster, components.StackWorker}
+
+// New returns a Client that runs commands through runner, acting on the stacks
+// in topo (as returned by topology.Chains or topology.Render).
+func New(cfg *config.Config, runner proc.Runner, topo map[string][]string) *Client {
+	return &Client{cfg: cfg, runner: runner, topo: topo, overlays: map[string][]string{}}
+}
+
+// spec builds the `docker compose <files> <args...>` command shared by Run
+// and Output, before they diverge on how the output is handled.
+func (c *Client) spec(files []string, args ...string) proc.Spec {
 	cmdArgs := append([]string{"compose"}, FileArgs(files)...)
 	cmdArgs = append(cmdArgs, args...)
-	cmd := exec.Command("docker", cmdArgs...)
-	cmd.Dir = cfg.RepoRoot
-	cmd.Env = Env(cfg)
-	return cmd
+	return proc.Spec{
+		Name: "docker",
+		Args: cmdArgs,
+		Dir:  c.cfg.RepoRoot,
+		Env:  Env(c.cfg),
+	}
 }
 
-// Run executes `docker compose <files> <args...>` with output streamed to
-// the current process's stdout/stderr.
-func Run(cfg *config.Config, files []string, args ...string) error {
-	cmd := newCmd(cfg, files, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	return cmd.Run()
+// run executes `docker compose <files> <args...>` with output streamed to the
+// current process's stdout/stderr.
+//
+// Unexported: callers name an intent (Recreate, Restart, Exec) and the chain
+// is resolved from the bound topology. Handing them a raw file list and
+// argument slice is what let docker's vocabulary spread across fifteen call
+// sites in the first place.
+func (c *Client) run(files []string, args ...string) error {
+	s := c.spec(files, args...)
+	// Stdin is wired for every invocation, not just the interactive shell:
+	// that is what `oak-dev shell` needs and what compose has always done, so
+	// narrowing it here would be a behaviour change disguised as a cleanup.
+	s.Stdin = true
+	return c.runner.Run(s)
 }
 
-// Output runs `docker compose <files> <args...>` and returns combined output.
-func Output(cfg *config.Config, files []string, args ...string) ([]byte, error) {
-	return newCmd(cfg, files, args...).CombinedOutput()
+// output runs `docker compose <files> <args...>` and returns combined output.
+// Combined, because every caller reports it back to the user attached to the
+// error - stderr is the part worth reading when compose fails.
+func (c *Client) output(files []string, args ...string) ([]byte, error) {
+	s := c.spec(files, args...)
+	s.Combined = true
+	return c.runner.Capture(s)
 }

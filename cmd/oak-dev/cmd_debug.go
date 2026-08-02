@@ -16,7 +16,6 @@ import (
 	"oak-dev/internal/config"
 	"oak-dev/internal/debugstate"
 	"oak-dev/internal/testsuite"
-	"oak-dev/internal/topology"
 )
 
 func newDebugCmd() *cobra.Command {
@@ -42,90 +41,11 @@ root and cluster stacks), narrow it with --stack.`,
 		ValidArgsFunction: completeComponents,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := cfgFrom(cmd)
-
-			c, err := components.Resolve(args[0])
+			tl, err := newTools(cfg)
 			if err != nil {
 				return err
 			}
-			t, err := pickTarget(cfg, c)
-			if err != nil {
-				return err
-			}
-
-			// Recreating the worker container mid-suite mints a new node ID
-			// and strands scheduled instances (see CLAUDE.md) - `oak-dev dev`
-			// already guards its own worker restarts against this via the
-			// same lock file, but `debug` force-recreates unconditionally
-			// below, so it needs the same guard.
-			if t.Stack == components.StackWorker {
-				if testsuite.IsLocked(cfg) {
-					return fmt.Errorf("oak-dev test is running - never restart/recreate the worker mid-suite (it mints a new node ID and strands scheduled instances)")
-				}
-			}
-
-			// The debug override layers on top of the live mount, so the
-			// component has to be live before this makes sense.
-			if err := ensureLive(cfg, c, noLive); err != nil {
-				return err
-			}
-
-			files, err := topology.Render(cfg)
-			if err != nil {
-				return err
-			}
-			f, ok := files[t.Stack]
-			if !ok {
-				return fmt.Errorf("the %s stack is not in the current scope (%s)", t.Stack, cfg.Stack)
-			}
-
-			if c.Kind == components.KindGo {
-				fmt.Printf("oak-dev: building %s with debug flags (-gcflags=\"all=-N -l\")...\n", c.Name)
-				if _, err := build.Build(cfg, c, build.Options{Debug: true}); err != nil {
-					return fmt.Errorf("debug build failed: %w", err)
-				}
-				if err := build.EnsureDelve(cfg); err != nil {
-					return fmt.Errorf("installing delve: %w", err)
-				}
-			}
-			// Python needs no preparation here: the overlays pip-install
-			// debugpy themselves, at container start. Installing it up front
-			// with `compose exec` would land in a writable layer the
-			// --force-recreate below immediately throws away.
-
-			// Record the attachment before rendering the chain, so this
-			// component's own overlay is included alongside any already
-			// attached to the same container.
-			if err := debugstate.Add(cfg.RepoRoot, c.Name, t.Stack); err != nil {
-				return err
-			}
-			overlays, services, err := debugOverlays(cfg, t.Stack, t.Container)
-			if err != nil {
-				// Same reasoning as the compose failure below: nothing was
-				// attached, and leaving the entry behind would make every
-				// later `debug` in this stack fail on it too.
-				_ = debugstate.Remove(cfg.RepoRoot, c.Name, t.Stack)
-				return err
-			}
-			full := append(append([]string{}, f...), overlays...)
-
-			fmt.Printf("oak-dev: recreating %s with the debugger on localhost:%d...\n", joinNames(services), t.DebugPort)
-			if err := compose.Run(cfg, full, append([]string{"up", "-d", "--force-recreate"}, services...)...); err != nil {
-				// Nothing got attached, so don't leave the state file
-				// claiming otherwise - a later `debug` on a container this one
-				// shares would reapply an overlay that never took effect.
-				_ = debugstate.Remove(cfg.RepoRoot, c.Name, t.Stack)
-				return err
-			}
-			fmt.Printf("oak-dev: attach from VS Code (.vscode/launch.json) or any DAP client on localhost:%d.\n", t.DebugPort)
-			if len(t.InPlaceRestart) > 0 {
-				// reload deliberately never recreates the worker, so it can't
-				// undo this one - see the comment on reconcile().
-				fmt.Printf("         `oak-dev up --stack worker` detaches it again (this recreates the\n" +
-					"         container, so the worker re-registers with a new node ID).\n")
-			} else {
-				fmt.Printf("         `oak-dev reload %s` detaches it again.\n", c.Name)
-			}
-			return nil
+			return runDebug(cfg, tl, args[0], noLive)
 		},
 	}
 	cmd.Flags().BoolVar(&noLive, "no-live", false, "fail instead of adding the component to oak-dev.yaml's live: list")
@@ -211,4 +131,97 @@ func pickTarget(cfg *config.Config, c components.Component) (components.Target, 
 	}
 	return components.Target{}, fmt.Errorf("%s runs in %d stacks (%s) - pick one with --stack",
 		c.Name, len(inScope), joinNames(stacks))
+}
+
+// runDebug recreates a component's container with a debugger in front of it
+// and prints the port to attach to. Split out of RunE so the sequence - guard
+// the worker, make it live, build with debug flags, record the attachment,
+// reapply every overlay on that container - is reachable from a test.
+func runDebug(cfg *config.Config, tl *tools, name string, noLive bool) error {
+
+	c, err := components.Resolve(name)
+	if err != nil {
+		return err
+	}
+	t, err := pickTarget(cfg, c)
+	if err != nil {
+		return err
+	}
+
+	// Recreating the worker container mid-suite mints a new node ID
+	// and strands scheduled instances (see CLAUDE.md) - `oak-dev dev`
+	// already guards its own worker restarts against this via the
+	// same lock file, but `debug` force-recreates unconditionally
+	// below, so it needs the same guard.
+	if t.Stack == components.StackWorker {
+		if testsuite.IsLocked(cfg) {
+			return fmt.Errorf("oak-dev test is running - never restart/recreate the worker mid-suite (it mints a new node ID and strands scheduled instances)")
+		}
+	}
+
+	// The debug override layers on top of the live mount, so the
+	// component has to be live before this makes sense.
+	if err := ensureLive(cfg, tl, c, noLive); err != nil {
+		return err
+	}
+
+	if err := tl.rebind(cfg); err != nil {
+		return err
+	}
+
+	if c.Kind == components.KindGo {
+		fmt.Printf("oak-dev: building %s with debug flags (-gcflags=\"all=-N -l\")...\n", c.Name)
+		if _, err := tl.build.Build(c, build.Options{Debug: true}); err != nil {
+			return fmt.Errorf("debug build failed: %w", err)
+		}
+		if err := tl.build.EnsureDelve(); err != nil {
+			return fmt.Errorf("installing delve: %w", err)
+		}
+	}
+	// Python needs no preparation here: the overlays pip-install
+	// debugpy themselves, at container start. Installing it up front
+	// with `compose exec` would land in a writable layer the
+	// --force-recreate below immediately throws away.
+
+	// Record the attachment before rendering the chain, so this
+	// component's own overlay is included alongside any already
+	// attached to the same container.
+	if err := debugstate.Add(cfg.RepoRoot, c.Name, t.Stack); err != nil {
+		return err
+	}
+	overlays, services, err := debugOverlays(cfg, t.Stack, t.Container)
+	if err != nil {
+		// Same reasoning as the compose failure below: nothing was
+		// attached, and leaving the entry behind would make every
+		// later `debug` in this stack fail on it too.
+		_ = debugstate.Remove(cfg.RepoRoot, c.Name, t.Stack)
+		return err
+	}
+	// Every service the overlays touch is recreated together: an overlay can
+	// configure one other than the component being debugged -
+	// override-debug-cluster_service_manager.yml publishes its port on
+	// cluster_manager, because it has no network namespace of its own.
+	svcRefs := make([]compose.Ref, len(services))
+	for i, name := range services {
+		svcRefs[i] = compose.Ref{Stack: t.Stack, Container: name}
+	}
+
+	fmt.Printf("oak-dev: recreating %s with the debugger on localhost:%d...\n", joinNames(services), t.DebugPort)
+	if err := tl.compose.WithOverlays(t.Stack, overlays...).ForceRecreate(svcRefs...); err != nil {
+		// Nothing got attached, so don't leave the state file
+		// claiming otherwise - a later `debug` on a container this one
+		// shares would reapply an overlay that never took effect.
+		_ = debugstate.Remove(cfg.RepoRoot, c.Name, t.Stack)
+		return err
+	}
+	fmt.Printf("oak-dev: attach from VS Code (.vscode/launch.json) or any DAP client on localhost:%d.\n", t.DebugPort)
+	if len(t.InPlaceRestart) > 0 {
+		// reload deliberately never recreates the worker, so it can't
+		// undo this one - see the comment on reconcile().
+		fmt.Printf("         `oak-dev up --stack worker` detaches it again (this recreates the\n" +
+			"         container, so the worker re-registers with a new node ID).\n")
+	} else {
+		fmt.Printf("         `oak-dev reload %s` detaches it again.\n", c.Name)
+	}
+	return nil
 }

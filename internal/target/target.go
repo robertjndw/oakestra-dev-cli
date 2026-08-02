@@ -20,6 +20,26 @@ import (
 	"oak-dev/internal/config"
 )
 
+// Resolver turns specs into Targets. It holds the compose client because
+// answering "is this a raw container name" means asking compose what services
+// a stack declares, and it holds the answer cache because that question costs
+// ~200ms per stack and one command line can ask it several times.
+//
+// The cache lives here rather than in a package-level map so that it lasts
+// exactly as long as the command that created the Resolver, and so two tests
+// cannot see each other's answers.
+type Resolver struct {
+	cfg *config.Config
+	cmp *compose.Client
+
+	serviceCache map[string][]string
+}
+
+// NewResolver returns a Resolver for one command's worth of lookups.
+func NewResolver(cfg *config.Config, cmp *compose.Client) *Resolver {
+	return &Resolver{cfg: cfg, cmp: cmp, serviceCache: map[string][]string{}}
+}
+
 // Target is one addressable container.
 type Target struct {
 	// Stack is the compose project it belongs to, so callers know which -f
@@ -82,7 +102,8 @@ func (e endpoint) target() Target {
 // to stacks in the current scope. Resolution order matters: stack names are
 // checked before components because "cluster" is an unambiguous stack but an
 // ambiguous component prefix.
-func Resolve(cfg *config.Config, spec string) ([]Target, error) {
+func (r *Resolver) Resolve(spec string) ([]Target, error) {
+	cfg := r.cfg
 	q := strings.ToLower(strings.TrimSpace(spec))
 
 	// 1. A stack name: every container in that project.
@@ -90,7 +111,7 @@ func Resolve(cfg *config.Config, spec string) ([]Target, error) {
 		if !cfg.StackEnabled(q) {
 			return nil, fmt.Errorf("stack %q is not in the current scope (%s)", q, cfg.Stack)
 		}
-		names, err := services(cfg, q)
+		names, err := r.services(q)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +154,7 @@ func Resolve(cfg *config.Config, spec string) ([]Target, error) {
 		return out, nil
 	} else if strings.Contains(err.Error(), "ambiguous") {
 		// Only surface ambiguity if it isn't resolvable as a container below.
-		if stack, ok := findService(cfg, q); ok {
+		if stack, ok := r.findService(q); ok {
 			return []Target{{Stack: stack, Container: q, Label: q}}, nil
 		}
 		return nil, err
@@ -142,7 +163,7 @@ func Resolve(cfg *config.Config, spec string) ([]Target, error) {
 	// 4. A raw compose service name, in whichever enabled stack declares it.
 	//    This is what makes infrastructure containers (mongo_rootnet,
 	//    root_redis, cluster_service_manager) reachable without listing them.
-	if stack, ok := findService(cfg, q); ok {
+	if stack, ok := r.findService(q); ok {
 		return []Target{{Stack: stack, Container: q, Label: q}}, nil
 	}
 
@@ -153,11 +174,11 @@ func Resolve(cfg *config.Config, spec string) ([]Target, error) {
 
 // ResolveAll resolves several specs, de-duplicating containers so `logs
 // cluster cluster_manager` doesn't tail the same container twice.
-func ResolveAll(cfg *config.Config, specs []string) ([]Target, error) {
+func (r *Resolver) ResolveAll(specs []string) ([]Target, error) {
 	var out []Target
 	seen := map[string]bool{}
 	for _, s := range specs {
-		ts, err := Resolve(cfg, s)
+		ts, err := r.Resolve(s)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +195,8 @@ func ResolveAll(cfg *config.Config, specs []string) ([]Target, error) {
 }
 
 // Complete offers completion candidates for a target argument.
-func Complete(cfg *config.Config, prefix string) []string {
+func (r *Resolver) Complete(prefix string) []string {
+	cfg := r.cfg
 	var out []string
 	add := func(v, desc string) {
 		if strings.HasPrefix(v, strings.ToLower(prefix)) {
@@ -203,7 +225,7 @@ func Complete(cfg *config.Config, prefix string) []string {
 		if !cfg.StackEnabled(s) {
 			continue
 		}
-		names, err := services(cfg, s)
+		names, err := r.services(s)
 		if err != nil {
 			continue
 		}
@@ -225,22 +247,17 @@ func endpointNames() string {
 	return strings.Join(names, ", ")
 }
 
-// serviceCache avoids re-shelling to `docker compose config --services` for
-// every spec on one command line; it is ~200ms per stack.
-var serviceCache = map[string][]string{}
-
 // services lists the compose services declared by a stack. Asking compose
 // keeps this correct as upstream's files change, rather than maintaining a
 // hand-written container allowlist that silently goes stale.
-func services(cfg *config.Config, stack string) ([]string, error) {
-	if cached, ok := serviceCache[stack]; ok {
+//
+// Answers are cached on the Resolver: the question costs ~200ms per stack and
+// one command line (`logs cluster mongo_root worker`) asks it repeatedly.
+func (r *Resolver) services(stack string) ([]string, error) {
+	if cached, ok := r.serviceCache[stack]; ok {
 		return cached, nil
 	}
-	files, err := stackFiles(cfg, stack)
-	if err != nil {
-		return nil, err
-	}
-	out, err := compose.Output(cfg, files, "config", "--services")
+	out, err := r.cmp.StackCapture(stack, "config", "--services")
 	if err != nil {
 		return nil, fmt.Errorf("listing %s services: %w: %s", stack, err, strings.TrimSpace(string(out)))
 	}
@@ -251,16 +268,16 @@ func services(cfg *config.Config, stack string) ([]string, error) {
 		}
 	}
 	sort.Strings(names)
-	serviceCache[stack] = names
+	r.serviceCache[stack] = names
 	return names, nil
 }
 
-func findService(cfg *config.Config, name string) (string, bool) {
+func (r *Resolver) findService(name string) (string, bool) {
 	for _, stack := range components.Stacks() {
-		if !cfg.StackEnabled(stack) {
+		if !r.cfg.StackEnabled(stack) {
 			continue
 		}
-		names, err := services(cfg, stack)
+		names, err := r.services(stack)
 		if err != nil {
 			continue
 		}
@@ -269,8 +286,4 @@ func findService(cfg *config.Config, name string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func stackFiles(cfg *config.Config, stack string) ([]string, error) {
-	return compose.FilesForStack(cfg, cfg.Live, stack)
 }

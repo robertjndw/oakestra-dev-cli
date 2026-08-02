@@ -10,10 +10,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"oak-dev/internal/compose"
-	"oak-dev/internal/config"
 	"oak-dev/internal/multilog"
+	"oak-dev/internal/proc"
 	"oak-dev/internal/target"
-	"oak-dev/internal/topology"
 )
 
 func newLogsCmd() *cobra.Command {
@@ -45,20 +44,20 @@ Ctrl-C stops everything.`,
 		ValidArgsFunction: completeTargets,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := cfgFrom(cmd)
+			tl, err := newTools(cfg)
+			if err != nil {
+				return err
+			}
 
 			var sources []multilog.Source
 			if len(args) == 0 {
-				files, err := topology.Render(cfg)
-				if err != nil {
-					return err
-				}
-				sources = stackLogSources(files, cfg, "", tail)
+				sources = stackLogSources(tl, "", tail)
 			} else {
-				targets, err := target.ResolveAll(cfg, args)
+				targets, err := target.NewResolver(cfg, tl.compose).ResolveAll(args)
 				if err != nil {
 					return err
 				}
-				if sources, err = targetLogSources(cfg, targets, tail, noFollow); err != nil {
+				if sources, err = targetLogSources(tl, targets, tail, noFollow); err != nil {
 					return err
 				}
 			}
@@ -76,35 +75,27 @@ Ctrl-C stops everything.`,
 	return cmd
 }
 
-func targetLogSources(cfg *config.Config, targets []target.Target, tail int, noFollow bool) ([]multilog.Source, error) {
-	files, err := topology.Render(cfg)
-	if err != nil {
-		return nil, err
-	}
-
+func targetLogSources(tl *tools, targets []target.Target, tail int, noFollow bool) ([]multilog.Source, error) {
 	var out []multilog.Source
 	for _, t := range targets {
-		f, ok := files[t.Stack]
-		if !ok {
-			continue
-		}
-		args := append([]string{"compose"}, compose.FileArgs(f)...)
+		r := compose.Ref{Stack: t.Stack, Container: t.Container}
 
+		var spec proc.Spec
+		var err error
 		if len(t.Follow) > 0 {
-			// An endpoint that has to be subscribed to rather than read.
-			args = append(args, "exec", "-T", t.Container)
-			args = append(args, t.Follow...)
+			// An endpoint that has to be subscribed to rather than read: the
+			// cluster<->worker control plane is MQTT, not a container's stdout.
+			spec, err = tl.compose.ExecSpec(r, t.Follow...)
 		} else {
-			args = append(args, "logs", fmt.Sprintf("--tail=%d", tail))
-			if !noFollow {
-				args = append(args, "-f")
-			}
-			args = append(args, t.Container)
+			spec, err = tl.compose.LogSpec(r, compose.LogOpts{Tail: tail, Follow: !noFollow})
+		}
+		if err != nil {
+			continue // out of scope; nothing to follow there
 		}
 
 		out = append(out, multilog.Source{
-			Tag: t.Label, Dir: cfg.RepoRoot, Env: compose.Env(cfg),
-			Name: "docker", Args: args,
+			Tag: t.Label, Dir: spec.Dir, Env: spec.Env,
+			Name: spec.Name, Args: spec.Args,
 		})
 	}
 	return out, nil

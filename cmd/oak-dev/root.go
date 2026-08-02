@@ -192,5 +192,10 @@ func completeComponents(_ *cobra.Command, _ []string, toComplete string) ([]stri
 // completeTargets completes a logs/shell target: stacks, components,
 // endpoints and raw container names.
 func completeTargets(cmd *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return target.Complete(cfgFrom(cmd), toComplete), cobra.ShellCompDirectiveNoFileComp
+	cfg := cfgFrom(cmd)
+	tl, err := newTools(cfg)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return target.NewResolver(cfg, tl.compose).Complete(toComplete), cobra.ShellCompDirectiveNoFileComp
 }

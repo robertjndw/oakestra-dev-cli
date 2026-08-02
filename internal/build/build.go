@@ -9,13 +9,27 @@ package build
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"oak-dev/internal/components"
 	"oak-dev/internal/config"
+	"oak-dev/internal/proc"
 )
+
+// Builder cross-compiles components. It holds the Runner so a test can assert
+// on the `go build` invocations a code path produces - the GOARCH, the
+// -gcflags for Delve and the -ldflags stamping are all things that have to be
+// right and were previously unobservable.
+type Builder struct {
+	cfg    *config.Config
+	runner proc.Runner
+}
+
+// New returns a Builder that runs the toolchain through runner.
+func New(cfg *config.Config, runner proc.Runner) *Builder {
+	return &Builder{cfg: cfg, runner: runner}
+}
 
 // Dir returns build/linux_<arch>, creating it if needed.
 func Dir(cfg *config.Config) (string, error) {
@@ -34,18 +48,18 @@ type Options struct {
 // Build cross-compiles c and returns the binary path(s) it produced. Most
 // components produce one binary; nodeengine produces two (NodeEngine CLI +
 // nodeengined daemon).
-func Build(cfg *config.Config, c components.Component, opts Options) ([]string, error) {
+func (b *Builder) Build(c components.Component, opts Options) ([]string, error) {
 	if c.Kind != components.KindGo {
 		return nil, fmt.Errorf("%s is not a Go component", c.Name)
 	}
-	dir, err := Dir(cfg)
+	dir, err := Dir(b.cfg)
 	if err != nil {
 		return nil, err
 	}
-	srcDir := cfg.SourceDir(c)
+	srcDir := b.cfg.SourceDir(c)
 
 	if len(c.ExtraBinNames) > 0 {
-		return buildNodeEngine(cfg.GOARCH, srcDir, dir, opts)
+		return b.buildNodeEngine(b.cfg.GOARCH, srcDir, dir, opts)
 	}
 
 	var ldflags []string
@@ -53,26 +67,26 @@ func Build(cfg *config.Config, c components.Component, opts Options) ([]string, 
 		ldflags = []string{"-X", c.VersionVar + "=dev"}
 	}
 	out := filepath.Join(dir, c.BinName)
-	if err := goBuild(cfg.GOARCH, srcDir, out, c.GoMain, opts, ldflags); err != nil {
+	if err := b.goBuild(b.cfg.GOARCH, srcDir, out, c.GoMain, opts, ldflags); err != nil {
 		return nil, err
 	}
 	return []string{out}, nil
 }
 
-func buildNodeEngine(arch, srcDir, outDir string, opts Options) ([]string, error) {
+func (b *Builder) buildNodeEngine(arch, srcDir, outDir string, opts Options) ([]string, error) {
 	ldflags := []string{"-X", "go_node_engine/cmd.Version=dev"}
 	cli := filepath.Join(outDir, "NodeEngine")
 	daemon := filepath.Join(outDir, "nodeengined")
-	if err := goBuild(arch, srcDir, cli, ".", opts, ldflags); err != nil {
+	if err := b.goBuild(arch, srcDir, cli, ".", opts, ldflags); err != nil {
 		return nil, fmt.Errorf("building NodeEngine CLI: %w", err)
 	}
-	if err := goBuild(arch, srcDir, daemon, "./internal/daemon/nodeengined.go", opts, ldflags); err != nil {
+	if err := b.goBuild(arch, srcDir, daemon, "./internal/daemon/nodeengined.go", opts, ldflags); err != nil {
 		return nil, fmt.Errorf("building nodeengined daemon: %w", err)
 	}
 	return []string{cli, daemon}, nil
 }
 
-func goBuild(arch, dir, out, pkg string, opts Options, ldflags []string) error {
+func (b *Builder) goBuild(arch, dir, out, pkg string, opts Options, ldflags []string) error {
 	args := []string{"build", "-o", out}
 	if opts.Debug {
 		args = append(args, "-gcflags=all=-N -l")
@@ -82,12 +96,12 @@ func goBuild(arch, dir, out, pkg string, opts Options, ldflags []string) error {
 	}
 	args = append(args, pkg)
 
-	cmd := exec.Command("go", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return b.runner.Run(proc.Spec{
+		Name: "go",
+		Args: args,
+		Dir:  dir,
+		Env:  append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch),
+	})
 }
 
 func joinLdflags(parts []string) string {
@@ -102,7 +116,8 @@ func joinLdflags(parts []string) string {
 // EnsureDelve cross-compiles Delve into build/linux_<arch>/dlv the first
 // time it's needed - `oak-dev debug` mounts it alongside the target binary
 // so it can run headless *inside* the container's OS/arch, not the host's.
-func EnsureDelve(cfg *config.Config) error {
+func (b *Builder) EnsureDelve() error {
+	cfg := b.cfg
 	dir, err := Dir(cfg)
 	if err != nil {
 		return err
@@ -119,16 +134,16 @@ func EnsureDelve(cfg *config.Config) error {
 	// when cross-compiling that is $GOPATH/bin/$GOOS_$GOARCH/, which we copy
 	// from. GOPATH itself is left alone so this shares the normal module
 	// cache rather than downloading a second copy of everything.
-	gopath, err := goEnv("GOPATH")
+	gopath, err := b.goEnv("GOPATH")
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("go", "install", "github.com/go-delve/delve/cmd/dlv@latest")
-	cmd.Env = append(os.Environ(),
-		"CGO_ENABLED=0", "GOOS=linux", "GOARCH="+cfg.GOARCH, "GOBIN=")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := b.runner.Run(proc.Spec{
+		Name: "go",
+		Args: []string{"install", "github.com/go-delve/delve/cmd/dlv@latest"},
+		Env: append(os.Environ(),
+			"CGO_ENABLED=0", "GOOS=linux", "GOARCH="+cfg.GOARCH, "GOBIN="),
+	}); err != nil {
 		return err
 	}
 
@@ -141,8 +156,10 @@ func EnsureDelve(cfg *config.Config) error {
 	return copyExecutable(built, out)
 }
 
-func goEnv(key string) (string, error) {
-	out, err := exec.Command("go", "env", key).Output()
+// goEnv captures stdout only, deliberately: the result is used as a
+// filesystem path, so a toolchain warning on stderr must not end up inside it.
+func (b *Builder) goEnv(key string) (string, error) {
+	out, err := b.runner.Capture(proc.Spec{Name: "go", Args: []string{"env", key}})
 	if err != nil {
 		return "", fmt.Errorf("reading go env %s: %w", key, err)
 	}
@@ -159,15 +176,13 @@ func copyExecutable(src, dst string) error {
 
 // UnitTest runs `go test ./...` for c on the host - no containers, no
 // cross-compilation, just the fastest rung on the loop ladder.
-func UnitTest(cfg *config.Config, c components.Component, extraArgs ...string) error {
+func (b *Builder) UnitTest(c components.Component, extraArgs ...string) error {
 	if c.Kind != components.KindGo {
 		return fmt.Errorf("%s is not a Go component", c.Name)
 	}
-	srcDir := cfg.SourceDir(c)
-	args := append([]string{"test", "./..."}, extraArgs...)
-	cmd := exec.Command("go", args...)
-	cmd.Dir = srcDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return b.runner.Run(proc.Spec{
+		Name: "go",
+		Args: append([]string{"test", "./..."}, extraArgs...),
+		Dir:  b.cfg.SourceDir(c),
+	})
 }

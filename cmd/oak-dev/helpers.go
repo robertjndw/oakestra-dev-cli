@@ -13,8 +13,98 @@ import (
 	"oak-dev/internal/components"
 	"oak-dev/internal/compose"
 	"oak-dev/internal/config"
+	"oak-dev/internal/proc"
+	"oak-dev/internal/testsuite"
 	"oak-dev/internal/topology"
 )
+
+// tools bundles the three collaborators that start external processes.
+// Commands construct one in RunE and pass it down, rather than reading it
+// from a package-level variable: that is what lets a test call these same
+// functions with a proc.Recorder underneath and assert on what would have run.
+//
+// They are bundled because they travel together - reloadViaBinary needs the
+// builder and the compose client in the same breath - and three parameters at
+// every call would drown the arguments that carry meaning.
+type tools struct {
+	compose *compose.Client
+	build   *build.Builder
+	tests   *testsuite.Suite
+
+	// runner is kept so the compose client can be rebuilt against a different
+	// topology - see rebind and fullScope.
+	runner proc.Runner
+}
+
+// newTools wires the real, process-starting Runner.
+func newTools(cfg *config.Config) (*tools, error) {
+	return newToolsWith(cfg, proc.OS{})
+}
+
+// newToolsWith is the seam: tests pass a proc.Recorder here.
+//
+// It binds the compose client to the rendered topology, using Chains rather
+// than Render: constructing tools must not write .generated/, because shell
+// completion constructs them on every TAB press.
+func newToolsWith(cfg *config.Config, r proc.Runner) (*tools, error) {
+	topo, err := topology.Chains(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &tools{
+		compose: compose.New(cfg, r, topo),
+		build:   build.New(cfg, r),
+		tests:   testsuite.New(cfg, r),
+		runner:  r,
+	}, nil
+}
+
+// rebind recomputes the compose client's topology and writes the .generated/
+// artifacts.
+//
+// It has to exist because the topology is not constant for the life of a
+// command: adding a component to live: introduces a new override-live-*.yml,
+// and a client still bound to the chain from before would recreate the
+// container without the bind-mount - looking like success while running the
+// baked image.
+func (t *tools) rebind(cfg *config.Config) error {
+	topo, err := topology.Render(cfg)
+	if err != nil {
+		return err
+	}
+	t.compose = compose.New(cfg, t.runner, topo)
+	return nil
+}
+
+// fullScope returns tools whose compose client can reach every stack,
+// regardless of the current --stack. `down` and `reset` need it: a plain
+// `oak-dev down` after `up --stack worker` must still tear down the projects
+// that earlier scope left running.
+func (t *tools) fullScope(cfg *config.Config) (*tools, error) {
+	full := *cfg
+	full.Stack = components.ScopeFull
+	topo, err := topology.Render(&full)
+	if err != nil {
+		return nil, err
+	}
+	next := *t
+	next.compose = compose.New(cfg, t.runner, topo)
+	return &next, nil
+}
+
+// ref narrows a registry target to the pair compose addresses containers by.
+func ref(t components.Target) compose.Ref {
+	return compose.Ref{Stack: t.Stack, Container: t.Container}
+}
+
+// refs narrows several at once.
+func refs(targets []components.Target) []compose.Ref {
+	out := make([]compose.Ref, len(targets))
+	for i, t := range targets {
+		out[i] = ref(t)
+	}
+	return out
+}
 
 // upOrder is the order stacks must start in. Root and cluster both declare
 // the shared "oakestra" network (non-external) so whichever comes up first
@@ -28,14 +118,6 @@ func downOrder() []string {
 		rev[len(upOrder)-1-i] = s
 	}
 	return rev
-}
-
-// renderAll forces `full` scope so down/clean can reach every project
-// regardless of what --stack was used to bring things up with.
-func renderAll(cfg *config.Config) (map[string][]string, error) {
-	full := *cfg
-	full.Stack = components.ScopeFull
-	return topology.Render(&full)
 }
 
 // stacksOutOfScope returns the stacks the current scope excludes, in start
@@ -111,7 +193,7 @@ func liveComponents(cfg *config.Config) ([]components.Component, error) {
 // binary on disk yet, so `up` doesn't hand the container an empty /oak-bin
 // mount (the entrypoint would fail to resolve the binary at all, not just run
 // a stale one).
-func ensureLiveBinaries(cfg *config.Config) error {
+func ensureLiveBinaries(cfg *config.Config, tl *tools) error {
 	dir, err := build.Dir(cfg)
 	if err != nil {
 		return err
@@ -131,18 +213,9 @@ func ensureLiveBinaries(cfg *config.Config) error {
 			continue
 		}
 		fmt.Printf("oak-dev: %s is live but has no build yet, cross-compiling once...\n", c.Name)
-		if _, err := build.Build(cfg, c, build.Options{}); err != nil {
+		if _, err := tl.build.Build(c, build.Options{}); err != nil {
 			return fmt.Errorf("initial build of %s: %w", c.Name, err)
 		}
-	}
-	return nil
-}
-
-// runStack runs `docker compose <files...> <args...>` for one stack and
-// prefixes any error with which stack failed.
-func runStack(cfg *config.Config, stack string, files []string, args ...string) error {
-	if err := compose.Run(cfg, files, args...); err != nil {
-		return fmt.Errorf("%s stack: docker compose %v: %w", stack, args, err)
 	}
 	return nil
 }

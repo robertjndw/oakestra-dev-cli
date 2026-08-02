@@ -22,9 +22,31 @@ import (
 
 const genDir = ".generated"
 
+// Chains computes the effective compose file chain for every enabled stack,
+// keyed by stack name, and writes nothing.
+//
+// It is separate from Render because shell completion needs the chains on
+// every TAB press: rendering there would write .generated/ as a side effect of
+// pressing a key. Render is what commands that are about to change something
+// call, and it returns exactly what Chains does.
+func Chains(cfg *config.Config) (map[string][]string, error) {
+	files := map[string][]string{}
+	for _, name := range components.Stacks() {
+		if !cfg.StackEnabled(name) {
+			continue
+		}
+		fchain, err := compose.FilesForStack(cfg, cfg.Live, name)
+		if err != nil {
+			return nil, err
+		}
+		files[name] = fchain
+	}
+	return files, nil
+}
+
 // Render computes the effective compose files for every enabled stack and
 // writes the .generated/ debug artifacts. It returns the per-stack file
-// chains, keyed by stack name, ready to hand to compose.Run.
+// chains, keyed by stack name.
 func Render(cfg *config.Config) (map[string][]string, error) {
 	dir := filepath.Join(cfg.RepoRoot, genDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

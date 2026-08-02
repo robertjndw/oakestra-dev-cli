@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"oak-dev/internal/build"
 	"oak-dev/internal/components"
 	"oak-dev/internal/testsuite"
 )
@@ -45,6 +44,10 @@ Anything after -- goes straight to pytest or go test.`,
 		ValidArgsFunction: completeGoComponents,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := cfgFrom(cmd)
+			tl, err := newTools(cfg)
+			if err != nil {
+				return err
+			}
 
 			own := ownArgCount(cmd, args)
 			passthrough := args[own:]
@@ -62,7 +65,7 @@ Anything after -- goes straight to pytest or go test.`,
 					return fmt.Errorf("--smoke applies to the E2E suite, not to `oak-dev test %s`", c.Name)
 				}
 				fmt.Printf("oak-dev: go test ./... in %s\n", shortSrc(cfg, c))
-				return build.UnitTest(cfg, c, passthrough...)
+				return tl.build.UnitTest(c, passthrough...)
 			}
 
 			// Every stack has to be in scope before anything is started: the
@@ -77,7 +80,7 @@ Anything after -- goes straight to pytest or go test.`,
 			}
 
 			if !noUp {
-				if _, err := runUp(cfg, true); err != nil {
+				if _, err := runUp(cfg, tl, true); err != nil {
 					return err
 				}
 			}
@@ -90,7 +93,7 @@ Anything after -- goes straight to pytest or go test.`,
 			}
 			defer testsuite.Unlock(cfg)
 
-			return testsuite.Run(cfg, smoke, passthrough...)
+			return tl.tests.Run(smoke, passthrough...)
 		},
 	}
 	cmd.Flags().BoolVar(&smoke, "smoke", false, "health + registration only, skip the deployment tests")

@@ -5,12 +5,25 @@ package testsuite
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"oak-dev/internal/config"
+	"oak-dev/internal/proc"
 )
+
+// Suite runs the pytest E2E suite. It holds the Runner so a test can prove
+// that EnsureVenv skips the install when the stamp is present, and that the
+// stamp is only written after pip has actually succeeded.
+type Suite struct {
+	cfg    *config.Config
+	runner proc.Runner
+}
+
+// New returns a Suite that runs python through runner.
+func New(cfg *config.Config, runner proc.Runner) *Suite {
+	return &Suite{cfg: cfg, runner: runner}
+}
 
 // LockPath is a marker file written for the duration of a test run so
 // `oak-dev dev`'s watchers know to skip the worker (see CLAUDE.md: recreating
@@ -43,18 +56,19 @@ func VenvReady(cfg *config.Config) bool {
 // EnsureVenv creates .venv and installs tests/requirements.txt unless that has
 // already completed, mirroring the old `make venv` target. A previous run that
 // failed partway is retried rather than inherited.
-func EnsureVenv(cfg *config.Config) error {
+func (s *Suite) EnsureVenv() error {
+	cfg := s.cfg
 	if VenvReady(cfg) {
 		return nil
 	}
 	venv := filepath.Join(cfg.RepoRoot, ".venv")
 	if _, err := os.Stat(filepath.Join(venv, "bin", "activate")); err != nil {
-		if err := run(cfg.RepoRoot, "python3", "-m", "venv", venv); err != nil {
+		if err := s.run("python3", "-m", "venv", venv); err != nil {
 			return err
 		}
 	}
 	pip := filepath.Join(venv, "bin", "pip")
-	if err := run(cfg.RepoRoot, pip, "install", "--quiet", "-r", "tests/requirements.txt"); err != nil {
+	if err := s.run(pip, "install", "--quiet", "-r", "tests/requirements.txt"); err != nil {
 		return err
 	}
 	return os.WriteFile(VenvStamp(cfg.RepoRoot), nil, 0o644)
@@ -64,11 +78,11 @@ func EnsureVenv(cfg *config.Config) error {
 // extra is passed straight through to pytest; if it names any test paths of
 // its own, they replace the default `tests/` rather than adding to it, so
 // `oak-dev test -- tests/test_03_deployment.py` runs just that file.
-func Run(cfg *config.Config, smoke bool, extra ...string) error {
-	if err := EnsureVenv(cfg); err != nil {
+func (s *Suite) Run(smoke bool, extra ...string) error {
+	if err := s.EnsureVenv(); err != nil {
 		return err
 	}
-	pytest := filepath.Join(cfg.RepoRoot, ".venv", "bin", "pytest")
+	pytest := filepath.Join(s.cfg.RepoRoot, ".venv", "bin", "pytest")
 
 	var args []string
 	if !namesPaths(extra) {
@@ -79,7 +93,7 @@ func Run(cfg *config.Config, smoke bool, extra ...string) error {
 		args = append(args, "-m", "not deployment")
 	}
 	args = append(args, extra...)
-	return run(cfg.RepoRoot, pytest, args...)
+	return s.run(pytest, args...)
 }
 
 // namesPaths reports whether extra contains a positional argument (anything
@@ -93,12 +107,10 @@ func namesPaths(extra []string) bool {
 	return false
 }
 
-func run(dir, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+// run executes from the repo root: pytest.ini, tests/ and tests/requirements.txt
+// are all resolved relative to it.
+func (s *Suite) run(name string, args ...string) error {
+	return s.runner.Run(proc.Spec{Name: name, Args: args, Dir: s.cfg.RepoRoot})
 }
 
 // IsLocked reports whether a test run is currently in progress.

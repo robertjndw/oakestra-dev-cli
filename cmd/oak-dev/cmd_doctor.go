@@ -6,8 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"oak-dev/internal/config"
 	"oak-dev/internal/doctor"
-	"oak-dev/internal/testsuite"
+	"oak-dev/internal/proc"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -37,7 +38,7 @@ setting it touches as it goes.`,
 			// Held, not swallowed: the checks below run either way (a broken
 			// venv shouldn't hide an unrelated failure), but this error is
 			// what `oak-dev doctor` exits on if nothing else does.
-			venvErr := testsuite.EnsureVenv(cfg)
+			venvErr := ensureVenv(cfg)
 			if venvErr != nil {
 				fmt.Fprintln(os.Stderr, "  venv setup failed:", venvErr)
 			}
@@ -106,4 +107,16 @@ setting it touches as it goes.`,
 	}
 	cmd.Flags().BoolVar(&fix, "fix", false, "repair what can be repaired automatically, then re-check")
 	return cmd
+}
+
+// ensureVenv creates the pytest venv for `oak-dev doctor`. It builds its own
+// tools rather than taking them as a parameter because doctor is the one
+// command that must keep working when the topology cannot be resolved - that
+// is the sort of thing it exists to report.
+func ensureVenv(cfg *config.Config) error {
+	tl, err := newToolsWith(cfg, proc.OS{})
+	if err != nil {
+		return err
+	}
+	return tl.tests.EnsureVenv()
 }
