@@ -2,15 +2,19 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"oak-dev/internal/build"
 	"oak-dev/internal/components"
 	"oak-dev/internal/compose"
 	"oak-dev/internal/config"
+	"oak-dev/internal/debugstate"
 	"oak-dev/internal/testsuite"
 	"oak-dev/internal/topology"
 )
@@ -74,12 +78,6 @@ root and cluster stacks), narrow it with --stack.`,
 				return fmt.Errorf("the %s stack is not in the current scope (%s)", t.Stack, cfg.Stack)
 			}
 
-			debugFile := filepath.Join(cfg.RepoRoot, "compose", t.DebugOverride)
-			if _, err := os.Stat(debugFile); err != nil {
-				return fmt.Errorf("no debug override for %s: %s is missing", t.Container, debugFile)
-			}
-			full := append(append([]string{}, f...), debugFile)
-
 			if c.Kind == components.KindGo {
 				fmt.Printf("oak-dev: building %s with debug flags (-gcflags=\"all=-N -l\")...\n", c.Name)
 				if _, err := build.Build(cfg, c, build.Options{Debug: true}); err != nil {
@@ -88,16 +86,34 @@ root and cluster stacks), narrow it with --stack.`,
 				if err := build.EnsureDelve(cfg); err != nil {
 					return fmt.Errorf("installing delve: %w", err)
 				}
-			} else {
-				fmt.Printf("oak-dev: installing debugpy into %s...\n", t.Container)
-				if out, err := compose.Output(cfg, f, "exec", "-T", t.Container,
-					"pip", "install", "--quiet", "debugpy"); err != nil {
-					return fmt.Errorf("installing debugpy: %w\n%s", err, out)
-				}
 			}
+			// Python needs no preparation here: the overlays pip-install
+			// debugpy themselves, at container start. Installing it up front
+			// with `compose exec` would land in a writable layer the
+			// --force-recreate below immediately throws away.
 
-			fmt.Printf("oak-dev: recreating %s with the debugger on localhost:%d...\n", t.Container, t.DebugPort)
-			if err := compose.Run(cfg, full, "up", "-d", "--force-recreate", t.Container); err != nil {
+			// Record the attachment before rendering the chain, so this
+			// component's own overlay is included alongside any already
+			// attached to the same container.
+			if err := debugstate.Add(cfg.RepoRoot, c.Name, t.Stack); err != nil {
+				return err
+			}
+			overlays, services, err := debugOverlays(cfg, t.Stack, t.Container)
+			if err != nil {
+				// Same reasoning as the compose failure below: nothing was
+				// attached, and leaving the entry behind would make every
+				// later `debug` in this stack fail on it too.
+				_ = debugstate.Remove(cfg.RepoRoot, c.Name, t.Stack)
+				return err
+			}
+			full := append(append([]string{}, f...), overlays...)
+
+			fmt.Printf("oak-dev: recreating %s with the debugger on localhost:%d...\n", joinNames(services), t.DebugPort)
+			if err := compose.Run(cfg, full, append([]string{"up", "-d", "--force-recreate"}, services...)...); err != nil {
+				// Nothing got attached, so don't leave the state file
+				// claiming otherwise - a later `debug` on a container this one
+				// shares would reapply an overlay that never took effect.
+				_ = debugstate.Remove(cfg.RepoRoot, c.Name, t.Stack)
 				return err
 			}
 			fmt.Printf("oak-dev: attach from VS Code (.vscode/launch.json) or any DAP client on localhost:%d.\n", t.DebugPort)
@@ -114,6 +130,67 @@ root and cluster stacks), narrow it with --stack.`,
 	}
 	cmd.Flags().BoolVar(&noLive, "no-live", false, "fail instead of adding the component to oak-dev.yaml's live: list")
 	return cmd
+}
+
+// debugOverlays returns the override-debug-*.yml files for every component
+// currently attached in this stack, plus every compose service those files
+// touch (which must all be recreated together for the overlay to take effect).
+//
+// Both halves matter. A debug overlay is not part of the rendered topology, so
+// recreating a container without reapplying the overlays already on it detaches
+// them - nodeengine and netmanager share the `worker` container, so debugging
+// one used to knock the other's Delve listener out. And an overlay can
+// configure a service other than the one being debugged:
+// override-debug-cluster_service_manager.yml publishes its port on
+// cluster_manager, because cluster_service_manager has no network namespace of
+// its own, so recreating only cluster_service_manager would never publish it.
+//
+// A missing override file is a registry bug, not a user error, so it's reported
+// as such rather than left to surface as a raw `docker compose` failure.
+func debugOverlays(cfg *config.Config, stack, container string) (files, services []string, err error) {
+	services = []string{container}
+	for _, name := range debugstate.InStack(cfg.RepoRoot, stack) {
+		c, err := components.Resolve(name)
+		if err != nil {
+			continue // a component renamed out from under the state file
+		}
+		for _, t := range c.InStack(stack) {
+			if t.DebugOverride == "" {
+				continue
+			}
+			path := filepath.Join(cfg.RepoRoot, "compose", t.DebugOverride)
+			if _, err := os.Stat(path); err != nil {
+				return nil, nil, fmt.Errorf("no debug override for %s: %s is missing", t.Container, path)
+			}
+			files = append(files, path)
+			svcs, err := composeServices(path)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, s := range svcs {
+				if !slices.Contains(services, s) {
+					services = append(services, s)
+				}
+			}
+		}
+	}
+	return files, services, nil
+}
+
+// composeServices returns the service names a compose fragment configures.
+func composeServices(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var frag struct {
+		Services map[string]yaml.Node `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &frag); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	// Sorted, so the recreate command is the same from one run to the next.
+	return slices.Sorted(maps.Keys(frag.Services)), nil
 }
 
 // pickTarget chooses which container to debug. --stack is the scope flag, so

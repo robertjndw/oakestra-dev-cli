@@ -20,19 +20,44 @@ func LockPath(cfg *config.Config) string {
 	return filepath.Join(cfg.RepoRoot, ".generated", "test.lock")
 }
 
-// EnsureVenv creates .venv and installs tests/requirements.txt if the venv
-// doesn't exist yet, mirroring the old `make venv` target.
+// VenvStamp is the file written once tests/requirements.txt is fully
+// installed. Its presence is what "the venv is ready" means everywhere.
+//
+// Nothing python3 or pip creates is a safe substitute. `python3 -m venv`
+// writes bin/activate before a single requirement is installed, and an
+// interrupted or half-failed `pip install -r` leaves the packages it got
+// through - pytest among them - on disk. Keying off either made every later
+// run skip the install and call a broken venv finished.
+func VenvStamp(repoRoot string) string {
+	return filepath.Join(repoRoot, ".venv", ".oak-dev-requirements-installed")
+}
+
+// VenvReady reports whether .venv exists with its requirements installed.
+// doctor's venv check reads the same stamp EnsureVenv writes, so a failed
+// setup can't be reported as a healthy venv.
+func VenvReady(cfg *config.Config) bool {
+	_, err := os.Stat(VenvStamp(cfg.RepoRoot))
+	return err == nil
+}
+
+// EnsureVenv creates .venv and installs tests/requirements.txt unless that has
+// already completed, mirroring the old `make venv` target. A previous run that
+// failed partway is retried rather than inherited.
 func EnsureVenv(cfg *config.Config) error {
-	venv := filepath.Join(cfg.RepoRoot, ".venv")
-	marker := filepath.Join(venv, "bin", "activate")
-	if _, err := os.Stat(marker); err == nil {
+	if VenvReady(cfg) {
 		return nil
 	}
-	if err := run(cfg.RepoRoot, "python3", "-m", "venv", venv); err != nil {
-		return err
+	venv := filepath.Join(cfg.RepoRoot, ".venv")
+	if _, err := os.Stat(filepath.Join(venv, "bin", "activate")); err != nil {
+		if err := run(cfg.RepoRoot, "python3", "-m", "venv", venv); err != nil {
+			return err
+		}
 	}
 	pip := filepath.Join(venv, "bin", "pip")
-	return run(cfg.RepoRoot, pip, "install", "--quiet", "-r", "tests/requirements.txt")
+	if err := run(cfg.RepoRoot, pip, "install", "--quiet", "-r", "tests/requirements.txt"); err != nil {
+		return err
+	}
+	return os.WriteFile(VenvStamp(cfg.RepoRoot), nil, 0o644)
 }
 
 // Run executes the suite. smoke=true runs only health + registration tests.

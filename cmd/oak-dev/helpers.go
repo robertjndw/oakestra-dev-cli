@@ -38,6 +38,18 @@ func renderAll(cfg *config.Config) (map[string][]string, error) {
 	return topology.Render(&full)
 }
 
+// stacksOutOfScope returns the stacks the current scope excludes, in start
+// order - empty when the scope covers everything.
+func stacksOutOfScope(cfg *config.Config) []string {
+	var out []string
+	for _, stack := range upOrder {
+		if !cfg.StackEnabled(stack) {
+			out = append(out, stack)
+		}
+	}
+	return out
+}
+
 // inScopeTargets returns the targets of c that fall inside the current scope.
 func inScopeTargets(cfg *config.Config, c components.Component) []components.Target {
 	var out []components.Target

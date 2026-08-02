@@ -1,15 +1,15 @@
 # `oak-dev debug root_service_manager` layers this on top of
-# override-live-root_service_manager.yml. Unlike the other Python debug
-# overlays, this one still has to install gunicorn itself - it replaces
-# `command:` wholesale, so the live override's own `pip install gunicorn`
-# doesn't run. debugpy is installed separately by `oak-dev debug` via
-# `compose exec` (see cmd/oak-dev/cmd_debug.go), same as every other
-# component. Single worker, no --reload: both fork extra processes debugpy
-# would not follow into.
+# override-live-root_service_manager.yml. This one has to install gunicorn as
+# well as debugpy - it replaces `command:` wholesale, so the live override's own
+# `pip install gunicorn` doesn't run. Both installs happen at container start,
+# in `command:`, because applying this overlay force-recreates the container and
+# discards anything an up-front `docker compose exec` install had written.
+# Single worker, no --reload: both fork extra processes debugpy would not follow
+# into.
 services:
   root_service_manager:
     command: >
-      sh -c "pip install --quiet --disable-pip-version-check gunicorn &&
+      sh -c "pip install --quiet --disable-pip-version-check gunicorn debugpy &&
       exec python -m debugpy --listen 0.0.0.0:5999 -m gunicorn -k eventlet
       --workers 1 --bind [::]:10099 oak_root_sm:app"
     ports:

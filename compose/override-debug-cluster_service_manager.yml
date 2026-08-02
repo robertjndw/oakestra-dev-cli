@@ -18,6 +18,6 @@ services:
       - "5684:5998"
   cluster_service_manager:
     command: >
-      sh -c "pip install --quiet --disable-pip-version-check gunicorn &&
+      sh -c "pip install --quiet --disable-pip-version-check gunicorn debugpy &&
       exec python -m debugpy --listen 0.0.0.0:5998 -m gunicorn -k eventlet
       --workers 1 --bind [::]:10110 service_manager:app"

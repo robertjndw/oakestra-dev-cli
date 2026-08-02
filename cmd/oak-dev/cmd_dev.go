@@ -174,7 +174,7 @@ func watchSources(cfg *config.Config, watched []components.Component, self, test
 					Dir: srcDir,
 					Log: func(msg string) { fmt.Fprintln(w, msg) },
 				}, func() {
-					reloadOnChange(ctx, w, cfg, c, self, testMode, guarded, srcDir)
+					reloadOnChange(ctx, w, cfg, c, self, testMode, guarded)
 				})
 			},
 		})
@@ -186,7 +186,7 @@ func watchSources(cfg *config.Config, watched []components.Component, self, test
 // it skips the reload while a guarded (worker-resident) component's mid-suite
 // restart would strand scheduled instances, otherwise cross-compiles/restarts
 // it via `<self> reload <c>` and optionally re-runs the smoke suite.
-func reloadOnChange(ctx context.Context, w io.Writer, cfg *config.Config, c components.Component, self, testMode string, guarded bool, srcDir string) {
+func reloadOnChange(ctx context.Context, w io.Writer, cfg *config.Config, c components.Component, self, testMode string, guarded bool) {
 	if guarded && testsuite.IsLocked(cfg) {
 		fmt.Fprintf(w, "oak-dev: skipping %s reload - oak-dev test is running (never restart the worker mid-suite)\n", c.Name)
 		return
@@ -196,21 +196,29 @@ func reloadOnChange(ctx context.Context, w io.Writer, cfg *config.Config, c comp
 	// mid-`docker restart`; multilog.Run's shutdown grace period bounds how
 	// long that can take.
 	reloadCtx := context.WithoutCancel(ctx)
-	if err := runTagged(reloadCtx, w, srcDir, self, "reload", c.Name); err != nil {
+	if err := runTagged(reloadCtx, w, cfg, self, "reload", c.Name); err != nil {
 		return // runTagged already reported why; don't chain the smoke suite
 	}
 	if testMode == "smoke" {
-		_ = runTagged(reloadCtx, w, srcDir, self, "test", "--smoke")
+		_ = runTagged(reloadCtx, w, cfg, self, "test", "--smoke")
 	}
 }
 
-// runTagged runs name with args, streaming its combined stdout/stderr into w
-// (`reload`/`test --smoke` already narrate their own failures - e.g. the
-// BUILD FAILED banner - so the only thing the caller needs back is whether
-// it succeeded).
-func runTagged(ctx context.Context, w io.Writer, dir, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
+// runTagged re-execs oak-dev itself with args, streaming its combined
+// stdout/stderr into w (`reload`/`test --smoke` already narrate their own
+// failures - e.g. the BUILD FAILED banner - so the only thing the caller needs
+// back is whether it succeeded).
+//
+// The child is pinned to this run's repo root and scope with -C/--stack rather
+// than inheriting them from the process environment: the watcher's working
+// directory is the *source* checkout ($OAKESTRA_REPO), where a bare `oak-dev
+// reload` would fail its "is this an oakestra-macos-testing checkout" test, and
+// --stack keeps a `dev --stack root` session from reloading through whatever
+// scope .generated/stack happens to hold.
+func runTagged(ctx context.Context, w io.Writer, cfg *config.Config, self string, args ...string) error {
+	full := append([]string{"-C", cfg.RepoRoot, "--stack", cfg.Stack}, args...)
+	cmd := exec.CommandContext(ctx, self, full...)
+	cmd.Dir = cfg.RepoRoot
 	cmd.Stdout = w
 	cmd.Stderr = w
 	return cmd.Run()

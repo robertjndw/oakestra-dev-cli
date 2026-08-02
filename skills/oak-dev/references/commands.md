@@ -46,6 +46,9 @@ is always authoritative if this drifts.
   `--no-up`). With a Go component, runs `go test ./...` on the host, no
   Docker, ~2s. `--smoke` limits the E2E suite to health + registration.
   Anything after `--` passes straight through to pytest/`go test`.
+  The E2E suite needs all three stacks and refuses to start under a narrowed
+  scope - if it reports one, re-run as `oak-dev test --stack full`. That
+  applies to `--smoke` too; only the per-component `go test` path is exempt.
 
 ## Look inside
 
@@ -80,8 +83,12 @@ is always authoritative if this drifts.
 
 ## Debugger ports (`.vscode/launch.json`)
 
-Delve (Go): scheduler on the root stack listens on `:2345`, NodeEngine on
-`:2347`, NetManager on `:2346` (only NodeEngine and NetManager can be
-debugged simultaneously - they share the worker container). debugpy (Python):
-`cluster_manager` on `:5681`; other Python components follow the same
+Delve (Go): scheduler on the root stack listens on `:2345`, the cluster
+scheduler on `:2346`, NodeEngine on `:2347`, NetManager on `:2348`. debugpy
+(Python): `cluster_manager` on `:5681`; other Python components follow the same
 pattern - check `.vscode/launch.json` for the exact port before attaching.
+
+Any number of components can be debugged at once, including NodeEngine and
+NetManager together (separate processes in the shared worker container -
+oak-dev reapplies every attached overlay when it recreates a container, so
+attaching the second no longer detaches the first).

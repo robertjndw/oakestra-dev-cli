@@ -19,7 +19,7 @@ itself: installing oak-dev, and driving the OrbStack VM. See
 ## Prerequisites
 
 - Docker with Compose v2.18+ (Docker Desktop or [OrbStack](https://orbstack.dev), OrbStack recommended)
-- Go 1.22+ (builds `oak-dev` itself, plus the cross-compiled scheduler/NodeEngine binaries)
+- Go 1.24+ (builds `oak-dev` itself, plus the cross-compiled scheduler/NodeEngine binaries)
 - Python 3.10+ (for the pytest suite)
 - A local checkout of `oakestra` (sibling directory `../oakestra` by default)
 - Optional: the real `oak` CLI ([oakestra-cli](https://github.com/oakestra/oakestra-cli)) for `oak-dev status`, `orbctl` for the OrbStack VM path

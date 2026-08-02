@@ -9,6 +9,7 @@ import (
 	"oak-dev/internal/components"
 	"oak-dev/internal/compose"
 	"oak-dev/internal/config"
+	"oak-dev/internal/debugstate"
 	"oak-dev/internal/topology"
 )
 
@@ -82,6 +83,15 @@ func runUp(cfg *config.Config, sticky bool) (map[string][]string, error) {
 		if err := runStack(cfg, stack, f, upArgs...); err != nil {
 			return nil, err
 		}
+		// This stack was just recreated from the plain topology, which carries
+		// no override-debug-*.yml, so any debugger attached in it is gone.
+		// Only this stack's entries, and only now that the recreate actually
+		// succeeded: `up --stack root` leaves a debugged worker running, and
+		// forgetting it would make the next `debug netmanager` drop
+		// nodeengine's overlay.
+		if err := debugstate.ClearStacks(cfg.RepoRoot, stack); err != nil {
+			return nil, err
+		}
 	}
 	return files, nil
 }
@@ -132,6 +142,12 @@ staying narrowed.`,
 					continue
 				}
 				if err := runStack(cfg, stack, f, downArgs...); err != nil {
+					return err
+				}
+				// Its containers are gone, so nothing is attached in it any
+				// more - but a stack this --stack scope skipped keeps its
+				// entries (see runUp).
+				if err := debugstate.ClearStacks(cfg.RepoRoot, stack); err != nil {
 					return err
 				}
 			}

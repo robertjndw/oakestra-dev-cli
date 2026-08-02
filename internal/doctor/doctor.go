@@ -15,6 +15,7 @@ import (
 	"oak-dev/internal/components"
 	"oak-dev/internal/config"
 	"oak-dev/internal/skill"
+	"oak-dev/internal/testsuite"
 )
 
 // Result is the outcome of one check.
@@ -42,6 +43,7 @@ var checks = []namedCheck{
 	{"host arch vs docker arch", "worker/Dockerfile", false, checkArch},
 	{"proto/*_pb2.py generated", "oakestra/.gitignore", false, checkProto},
 	{"Go toolchain", "builds oak-dev itself and the cross-compiled binaries", false, checkGoToolchain},
+	{"pytest venv", "`oak-dev doctor` and `oak-dev test` both create it", false, checkVenv},
 	{"oak CLI on PATH", "needed for `oak-dev status`", true, checkOakCLI},
 	{"stale oakestra network/volumes", "`down --volumes` exists for this", false, checkStaleNetwork},
 	{"oak-dev skill (global)", "skills/oak-dev - lets an agent drive oak-dev from other repos (../oakestra, ../oakestra-net, oakestra-deploy)", true, checkSkillInstalled},
@@ -212,6 +214,28 @@ func checkGoToolchain(cfg *config.Config) (bool, string, string) {
 		return false, "go not found", "install Go - it builds oak-dev itself, plus the cross-compiled scheduler/NodeEngine binaries"
 	}
 	return true, strings.TrimSpace(string(out)), ""
+}
+
+// checkVenv verifies the pytest venv `oak-dev doctor` creates on every run
+// actually exists. It's a check and not just a bootstrap step because the
+// creation can fail (no python3, no venv module, a half-written .venv from an
+// interrupted run) - and `doctor` reporting "all required checks passed" over
+// the top of that failure is exactly the outcome doctor exists to prevent.
+//
+// It asks testsuite rather than looking for .venv/bin/pytest: a
+// `pip install -r` that dies after installing pytest but before the rest
+// leaves that binary behind, so its presence proves nothing.
+func checkVenv(cfg *config.Config) (bool, string, string) {
+	venv := filepath.Join(cfg.RepoRoot, ".venv")
+	if !testsuite.VenvReady(cfg) {
+		detail := "missing: " + venv
+		if _, err := os.Stat(venv); err == nil {
+			detail = "incomplete (requirements not fully installed): " + venv
+		}
+		return false, detail,
+			"check that python3 -m venv works, then re-run `oak-dev doctor` (delete .venv first if it exists but is incomplete)"
+	}
+	return true, venv, ""
 }
 
 func checkOakCLI(cfg *config.Config) (bool, string, string) {

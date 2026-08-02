@@ -1,6 +1,9 @@
 module oak-dev
 
-go 1.26.5
+// 1.24 is the real floor: strings.SplitSeq (internal/target, cmd_status,
+// internal/debugstate) landed there. Pinning the patch release the author
+// happened to have installed made every older toolchain refuse to build.
+go 1.24
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1

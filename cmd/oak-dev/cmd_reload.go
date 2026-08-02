@@ -9,6 +9,7 @@ import (
 	"oak-dev/internal/components"
 	"oak-dev/internal/compose"
 	"oak-dev/internal/config"
+	"oak-dev/internal/debugstate"
 	"oak-dev/internal/topology"
 )
 
@@ -159,6 +160,40 @@ func reconcile(cfg *config.Config, targets []components.Target, files map[string
 		if err := compose.Run(cfg, f, "up", "-d", t.Container); err != nil {
 			return fmt.Errorf("reconciling %s: %w", t.Container, err)
 		}
+		// Whatever `debug` attached to this container is gone now (that's the
+		// point of reconciling against the plain topology), so stop claiming
+		// it's still there - or the next `oak-dev debug` on a container this
+		// one shares would layer a dead overlay back on.
+		if err := forgetDebug(cfg, t.Stack, t.Container); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// forgetDebug drops the debug-state entries for every component attached in
+// stack whose container is the one that was just recreated from the plain
+// topology - that recreate carries no override-debug-*.yml, so every debugger
+// in that container is gone.
+//
+// Not only the component being reloaded: nodeengine and netmanager are both
+// the `worker` service, so recreating it detaches both. And only this stack:
+// `reload sched --stack root` leaves cluster_scheduler, and any debugger on
+// it, untouched.
+func forgetDebug(cfg *config.Config, stack, container string) error {
+	for _, name := range debugstate.InStack(cfg.RepoRoot, stack) {
+		c, err := components.Resolve(name)
+		if err != nil {
+			continue // a component renamed out from under the state file
+		}
+		for _, t := range c.InStack(stack) {
+			if t.Container != container {
+				continue
+			}
+			if err := debugstate.Remove(cfg.RepoRoot, name, stack); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -216,6 +251,21 @@ func reloadViaBinary(cfg *config.Config, c components.Component, targets []compo
 
 // reloadViaImage is the escape hatch for changes no mount can pick up.
 func reloadViaImage(cfg *config.Config, c components.Component, targets []components.Target, files map[string][]string) error {
+	// A live Go component's container runs /oak-bin/<binary> from the host
+	// mount, which shadows whatever the rebuild just baked into the image. So
+	// --image alone would recreate the container onto the *old* host binary and
+	// report success - the exact "tested stale code without knowing it" failure
+	// reloadViaBinary shouts about. Cross-compile too, so what ends up running
+	// is the source that was just edited either way.
+	if c.Kind == components.KindGo && cfg.IsLive(c.Name) {
+		fmt.Printf("oak-dev: %s is live, so /oak-bin shadows the image - cross-compiling for linux/%s too...\n",
+			c.Name, cfg.GOARCH)
+		if _, err := build.Build(cfg, c, build.Options{}); err != nil {
+			fmt.Printf("\033[41;97m BUILD FAILED \033[0m %s did not compile - the OLD binary is still running (stale).\n", c.Name)
+			return err
+		}
+	}
+
 	for _, t := range targets {
 		f := files[t.Stack]
 		if f == nil {
@@ -227,6 +277,14 @@ func reloadViaImage(cfg *config.Config, c components.Component, targets []compon
 		}
 		if err := compose.Run(cfg, f, "up", "-d", t.Container); err != nil {
 			return fmt.Errorf("recreating %s: %w", t.Container, err)
+		}
+		// Recreated from the plain topology, exactly like reconcile does, so
+		// any debugger that was attached here is gone - and unlike reconcile
+		// this path doesn't skip the in-place (worker) targets, so it's the
+		// one thing that detaches `debug nodeengine`/`debug netmanager`
+		// without an `oak-dev up`.
+		if err := forgetDebug(cfg, t.Stack, t.Container); err != nil {
+			return err
 		}
 	}
 	fmt.Printf("oak-dev: %s rebuilt and recreated (%s).\n", c.Name, containerList(targets))

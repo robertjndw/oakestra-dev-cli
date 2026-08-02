@@ -34,8 +34,12 @@ setting it touches as it goes.`,
 			cfg := cfgFrom(cmd)
 
 			fmt.Println("oak-dev: ensuring the pytest venv...")
-			if err := testsuite.EnsureVenv(cfg); err != nil {
-				fmt.Fprintln(os.Stderr, "  venv setup failed:", err)
+			// Held, not swallowed: the checks below run either way (a broken
+			// venv shouldn't hide an unrelated failure), but this error is
+			// what `oak-dev doctor` exits on if nothing else does.
+			venvErr := testsuite.EnsureVenv(cfg)
+			if venvErr != nil {
+				fmt.Fprintln(os.Stderr, "  venv setup failed:", venvErr)
 			}
 
 			pending := 0
@@ -88,6 +92,13 @@ setting it touches as it goes.`,
 			}
 			if failed > 0 {
 				return fmt.Errorf("%d required check(s) failed", failed)
+			}
+			// checkVenv already reports this (it reads the same stamp
+			// EnsureVenv writes), so reaching here with a venv error should be
+			// impossible - but "all required checks passed" must never print
+			// over a failed setup, whatever the checks happen to look at.
+			if venvErr != nil {
+				return fmt.Errorf("venv setup failed: %w", venvErr)
 			}
 			fmt.Println("\noak-dev: all required checks passed.")
 			return nil

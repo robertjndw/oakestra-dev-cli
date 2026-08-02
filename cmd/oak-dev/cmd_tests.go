@@ -65,6 +65,17 @@ Anything after -- goes straight to pytest or go test.`,
 				return build.UnitTest(cfg, c, passthrough...)
 			}
 
+			// Every stack has to be in scope before anything is started: the
+			// suite drives the root API end to end (even --smoke checks the
+			// root, the cluster and worker registration), so a narrowed scope
+			// can only fail, and it would fail as an opaque connection timeout
+			// minutes into a run rather than immediately.
+			if missing := stacksOutOfScope(cfg); len(missing) > 0 {
+				return fmt.Errorf("the E2E suite needs the root, cluster and worker stacks, but %s leaves out %s.\n"+
+					"Re-run as `oak-dev test --stack full`, or `oak-dev up --stack full` first",
+					cfg.ScopeLine(), joinNames(missing))
+			}
+
 			if !noUp {
 				if _, err := runUp(cfg, true); err != nil {
 					return err
