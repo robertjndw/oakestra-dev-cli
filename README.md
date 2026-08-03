@@ -1,38 +1,233 @@
 # oakestra-macos-testing
 
-Local testing setup for [Oakestra](https://github.com/oakestra/oakestra) on macOS.
+Local dev + testing setup for [Oakestra](https://github.com/oakestra/oakestra) on macOS
+(Linux-compatible - only the OrbStack VM path is Mac-only).
 
 It runs the full Oakestra stack (root orchestrator, cluster orchestrator, and a
-dockerized worker node) from your local `oakestra` checkout and verifies it with
-an end-to-end test suite: cluster registration, worker attachment, and a full
+dockerized worker node) from your local `oakestra` checkout, lets you edit that
+source live without rebuilding images, and verifies changes with an
+end-to-end test suite: cluster registration, worker attachment, and a full
 deploy / scale / undeploy lifecycle of a real container workload.
 
-Typical use: implement a feature in the `oakestra` repo, then run `make e2e`
-here to prove the whole platform still works.
+All of it - compose file assembly, live-mount overrides, cross-compiling,
+debugger wiring, doctor checks, the watch loop - lives in the **`oak-dev`** Go
+CLI (`cmd/oak-dev`), which `make install` puts on your PATH. `oak-dev --help`
+is the source of truth. The `Makefile` covers only what oak-dev can't do for
+itself: installing oak-dev, and driving the OrbStack VM. See
+[CONTRIBUTION.md](CONTRIBUTION.md) for how it fits together internally.
 
 ## Prerequisites
 
-- Docker with Compose v2.17+ (Docker Desktop or [OrbStack](https://orbstack.dev), OrbStack recommended)
-- Python 3.10+
+- Docker with Compose v2.18+ (Docker Desktop or [OrbStack](https://orbstack.dev), OrbStack recommended)
+- Go 1.24+ (builds `oak-dev` itself, plus the cross-compiled scheduler/NodeEngine binaries)
+- Python 3.10+ (for the pytest suite)
 - A local checkout of `oakestra` (sibling directory `../oakestra` by default)
-- Optional: OrbStack CLI (`orbctl`) if you want a real Linux VM worker instead of the dockerized one
+- Optional: the real `oak` CLI ([oakestra-cli](https://github.com/oakestra/oakestra-cli)) for `oak-dev status`, `orbctl` for the OrbStack VM path
+
+`oak-dev doctor` checks all of the above and tells you exactly what's missing.
 
 ## Quickstart
 
 ```bash
-cp .env.example .env   # once - adjust paths/values if needed
-make e2e               # build + start everything + run the test suite
+make install                          # build oak-dev onto your PATH
+cp .env.example .env                  # once, adjust paths/values if needed
+cp oak-dev.yaml.example oak-dev.yaml  # once, pick your live: components + stack
+oak-dev doctor --fix                  # prerequisites, venv, protobuf stubs, oak CLI
+oak-dev dev                           # start everything, watch for edits, stream logs
 ```
 
-The first run takes a few minutes (builds all images from source). Subsequent
-runs are fast thanks to the Docker layer cache.
+The first run takes a few minutes (it builds all images from source). Later
+runs are fast thanks to the Docker layer cache - and a service in
+`oak-dev.yaml`'s `live:` list doesn't rebuild an image at all.
 
-When the stack is already running, iterate with just the tests:
+### A typical session
+
+Say you're fixing how NodeEngine handles an MQTT deploy message:
 
 ```bash
-make test          # full suite
-make test-smoke    # health + registration only, skips deployments
+oak-dev dev ne --stack worker      # cluster + worker only, watching NodeEngine
 ```
+
+In another terminal:
+
+```bash
+oak application create -f fixtures/nginx.json   # deploy a real workload
+oak-dev logs mqtt                               # watch nodes/<id>/control/deploy go past
+# edit go_node_engine/... -> cross-compiled and restarted in place (~5s), same container
+oak-dev debug ne                                # attach Delve when you need breakpoints
+oak-dev test ne                                 # go test ./..., no containers (~2s)
+oak-dev status                                  # clusters, nodes, instances, URLs
+oak-dev down                                    # stop everything
+```
+
+Everything goes through `oak-dev`; the `Makefile` only installs it and drives
+the OrbStack VM (see
+[Real worker in an OrbStack VM (macOS only)](#real-worker-in-an-orbstack-vm-macos-only)).
+
+### Teaching an AI coding agent to drive oak-dev
+
+`oak-dev skill install` installs a portable [Agent Skill](https://agentskills.io)
+(`skills/oak-dev`) that teaches an AI coding agent - Claude Code, Codex,
+Cursor, and others - what `oak-dev` can do, without needing this README open.
+Run it from wherever you're actually working, including a sibling checkout:
+
+```bash
+cd ../oakestra && oak-dev skill install   # agent(s) auto-detected in ../oakestra
+oak-dev skill status                      # is it installed, and up to date?
+```
+
+No Go toolchain needed? The same skill installs via
+[skills.sh](https://skills.sh): `npx skills add oakestra/oakestra-macos-testing`.
+See `oak-dev skill --help` for `--global`/`--target`, and
+[skills/oak-dev/SKILL.md](skills/oak-dev/SKILL.md) for what it covers.
+
+## Configuration reference
+
+Two files control settings, and `oak-dev config` reads/writes the first
+without you opening it:
+
+- **`oak-dev.yaml`** (copy `oak-dev.yaml.example`) - every key has a default,
+  so an absent file still works: full stack, nothing mounted from source.
+- **`.env`** (copy `.env.example`) - authoritative for the settings it
+  covers, and overrides the matching `oak-dev.yaml`/default values.
+
+```yaml
+oakestra_repo: ../oakestra
+oakestra_net_repo: ../oakestra-net  # only for root_service_manager/cluster_service_manager/netmanager
+libs_repo: null                # optional: local oakestra_utils_library checkout
+cluster: {name: test-cluster, location: "52.5200,13.4050,100"}
+workers: 1
+live: [system_manager, cluster_manager]   # run these from your working tree
+stack: full                     # full | root | cluster | worker
+profiles: {dashboard: false, observability: false, addons: false}
+versions: {netmanager: auto, lib_branch: develop}
+```
+
+`live:` and `stack:` are the two highest-leverage keys: services you aren't
+editing are never built, and services you don't need are never started. You
+rarely edit `live:` by hand, though - `oak-dev reload` and `oak-dev debug`
+add what they need, and `oak-dev status` shows the current set. An unknown
+name in either key is a startup error, not a silent no-op.
+
+`oak-dev` writes `.generated/compose-args` (the effective `-f` chain per
+stack) and `.generated/dev-live.yml` (the merged live overlay actually in
+effect) so the result is always inspectable - safe to delete, regenerated on
+every command.
+
+| `.env` variable | Default | Purpose |
+|---|---|---|
+| `OAKESTRA_REPO` | `../oakestra` | Path to the oakestra checkout to test |
+| `OAKESTRA_NET_REPO` | `../oakestra-net` | Path to the oakestra-net checkout, for `root_service_manager`/`cluster_service_manager`/`netmanager` |
+| `LIB_BRANCH` | `develop` | Branch of the shared Python libraries used in image builds |
+| `NETMANAGER_VERSION` | `alpha-` + contents of `version.txt` | NetManager release baked into the worker (develop maps to alpha tags) |
+| `CLUSTER_NAME` | `test-cluster` | Cluster name registered at the root |
+| `CLUSTER_LOCATION` | Berlin coords | lat,lon,altitude of the cluster |
+| `OAK_ROOT_API` | `http://localhost:10000` | Root API URL used by the tests |
+| `OAK_CLUSTER_API` | `http://localhost:10100` | Cluster manager URL used by the tests |
+| `OAK_READY_TIMEOUT` | `180` | Seconds to wait for boot/registration |
+| `OAK_DEPLOY_TIMEOUT` | `300` | Seconds to wait for instances to reach RUNNING |
+
+## The thirteen commands
+
+```
+Start and stop            Work on the code          Look inside
+  up                        dev                       logs
+  down                      reload                    shell
+  reset                     debug                     status
+                            test
+                                                    Set up
+                                                      doctor
+                                                      config
+                                                      skill
+```
+
+`oak-dev --help` groups them exactly like this, and every command has a
+`--help` with real examples. Two conventions apply throughout:
+
+**Components** can be written in full, by alias, or by any unambiguous prefix.
+`cluster_manager`, `cm` and `cluster_man` are the same thing; `-` and `_` are
+interchangeable. Ambiguity is an error that lists the candidates, never a
+silent guess.
+
+| Component | Alias | Language | Repo | Source |
+|---|---|---|---|---|
+| `system_manager` | `sm` | Python | oakestra | `root_orchestrator/system-manager-python` |
+| `jwt_generator` | `jwt` | Python | oakestra | `root_orchestrator/jwt-generator` |
+| `root_resource_abstractor` | `rra` | Python | oakestra | `resource-abstractor` |
+| `cluster_manager` | `cm` | Python | oakestra | `cluster_orchestrator/cluster-manager` |
+| `cluster_resource_abstractor` | `cra` | Python | oakestra | `resource-abstractor` |
+| `scheduler` | `sched` | Go | oakestra | `scheduler` (runs in both root and cluster) |
+| `nodeengine` | `ne` | Go | oakestra | `go_node_engine` (the worker) |
+| `root_service_manager` | `rsm` | Python | oakestra-net | `root-service-manager/service-manager` |
+| `cluster_service_manager` | `csm` | Python | oakestra-net | `cluster-service-manager/service-manager` |
+| `netmanager` | `nm` | Go | oakestra-net | `node-net-manager` (the worker) |
+
+Both resource abstractors share one source tree, so editing it affects both.
+`scheduler` is one binary in two containers, so `oak-dev reload sched`
+restarts both; narrow with `--stack root` when you mean one. The oakestra-net
+components come from a separate checkout (`OAKESTRA_NET_REPO`, default
+`../oakestra-net`) - `oak-dev doctor` checks for it, but only as an optional
+check, since it's not needed unless you're editing one of those three.
+`netmanager` shares the worker container with `nodeengine`; `oak-dev reload
+netmanager` restarts nodeengined too, since NodeEngine only registers with
+NetManager's socket once, at startup.
+
+**Scope** is set by `--stack full|root|cluster|worker` on any command, and
+defaults to `oak-dev.yaml`'s `stack:`. The scope you pass to `up` becomes
+sticky - recorded in `.generated/stack` and reused by later commands, so you
+don't repeat `--stack worker` all session. A plain `oak-dev down` clears it,
+and `oak-dev status` always shows which scope is in effect and where it came
+from. `worker` scope also starts `cluster`, since the worker registers
+against it.
+
+## Command reference
+
+Every command below also accepts the global `--stack full|root|cluster|worker`
+flag described under **Scope** in [The twelve commands](#the-twelve-commands)
+- it's omitted from the signatures here since it applies uniformly, not just
+to the commands where scoping is the main point.
+
+| Command | What it does |
+|---|---|
+| `oak-dev up [--workers N]` | Builds if needed and starts every stack in scope, root → cluster → worker order. `--workers N` runs N dockerized workers. |
+| `oak-dev down [--volumes] [--yes]` | Stops the stacks in scope, in reverse order. `--volumes` also deletes the MongoDB, Redis and containerd volumes for a genuinely fresh start (prompts unless `--yes`). Clears the sticky scope. |
+| `oak-dev reset [--yes]` | The "state is weird" fix (~15s, no image work): drops every non-system database in root and cluster, flushes both redis instances, and restarts services so in-memory caches clear too. Doesn't re-register the worker. |
+| `oak-dev dev [component...] [--no-up] [--test smoke]` | The one command to start working: brings the stack up, merges logs from every stack in scope, and cross-compiles/restarts live Go components on save. Python services live-reload via `gunicorn --reload` already. `--test smoke` reruns the smoke suite after each rebuild. |
+| `oak-dev reload [component...] [--image] [--no-live]` | Makes an edit take effect - the mechanism depends on the component's language (see below). `--image` forces a full rebuild + recreate. Adds the component to `live:` automatically if it wasn't there; `--no-live` turns that into an error instead. |
+| `oak-dev debug <component> [--no-live]` | Recreates the container with a debugger attached (Delve for Go, debugpy for Python) and prints the `localhost` port to attach to (matches `.vscode/launch.json`). |
+| `oak-dev test [component] [--smoke] [--no-up] [-- args...]` | With no argument, runs the full pytest E2E suite (starts the stack unless `--no-up`). `--smoke` runs health + registration only. With a component, runs its own `go test ./...` on the host - no Docker. Anything after `--` passes straight through. |
+| `oak-dev logs [target...] [--tail N] [--no-follow]` | Streams logs for a stack, component, container, or endpoint (see below). No target merges every stack in scope into one color-tagged stream. |
+| `oak-dev shell <target> [-- cmd...]` | Opens a shell (or runs a command) in a stack, component, container, or endpoint. Prefers bash, falls back to sh. |
+| `oak-dev status` | Answers "is Oakestra healthy" - active scope, which components run from your working tree, cluster/instance state (via the real `oak` CLI if present), a container table, and service URLs. |
+| `oak-dev doctor [--fix]` | Runs preflight checks and prints a fix for anything red. `--fix` repairs what it can: creates the pytest venv, generates protobuf stubs, points the `oak` CLI at this stack. |
+| `oak-dev config`, `oak-dev config get <key>`, `oak-dev config set <key> <value>` | Reads or writes `oak-dev.yaml` settings without opening the file. `set` edits the file in place, keeping comments, and warns if `.env` or the sticky scope outranks what it just wrote. |
+| `oak-dev completion install [shell]` | Installs shell completion (bash/zsh/fish) to the right place for your shell. `completion --help` generates a script only (also covers powershell). |
+| `oak-dev skill install\|status\|uninstall [--global] [--target auto\|claude\|agents\|all]` | Installs the `skills/oak-dev` Agent Skill into `.claude/skills` and/or `.agents/skills` (see [Teaching an AI coding agent to drive oak-dev](#teaching-an-ai-coding-agent-to-drive-oak-dev)). Works from any directory - never needs `-C` or a checkout. |
+
+**Reload mechanism by component:**
+
+| Component | What happens | Time |
+|---|---|---|
+| any Python service | already mounted under `gunicorn --reload`, nothing to do | instant |
+| `scheduler` | cross-compile, restart the container in place | ~5s |
+| `nodeengine`, `netmanager` | cross-compile, restart the process *inside* the worker | ~5s |
+| anything, `--image` | `docker compose build` + recreate | ~30s |
+
+`reload nodeengine`/`reload netmanager` restart their process, never the
+container: a new container means a new hostname, which means
+`cluster_manager` registers a new node ID and every instance scheduled to the
+old one is stuck in `NODE_SCHEDULED` forever. `reload netmanager` also
+restarts `nodeengined`, since NodeEngine only registers with NetManager's
+socket once, at startup.
+
+**`logs`/`shell` endpoints** (in addition to a stack, component, or raw
+container name):
+
+| Endpoint | What it does |
+|---|---|
+| `mqtt` | `mosquitto_sub -t '#'` on the broker - the only way to watch the cluster↔worker control plane live |
+| `mongo-root` | `mongosh` against the root mongo (port 10007) |
+| `mongo-cluster` | `mongosh` against the cluster mongo (port 10107) |
 
 ## What the test suite covers
 
@@ -53,147 +248,59 @@ Tests poll with generous timeouts (configurable via `OAK_READY_TIMEOUT` and
 `OAK_DEPLOY_TIMEOUT` in `.env`) and fail fast when a job enters a terminal
 failure state such as `NoActiveClusterWithCapacity` or `FAILED`.
 
+**Never restart/recreate the worker while deployment tests run**: each new
+worker container registers a new node ID, so instances scheduled to the old
+one get stuck and the run times out. `oak-dev dev`'s watchers skip the worker
+automatically while `oak-dev test` holds its lock, and `oak-dev reload
+nodeengine` restarts the daemon rather than the container for the same
+reason.
+
 ## Repository layout
 
 ```
-├── Makefile               # all entry points: make help
-├── compose/worker.yml     # dockerized worker (own compose project, shared network)
-├── compose/override-*.yml # macOS-specific fixes applied to the upstream stacks
-├── worker/                # DinD worker image: NodeEngine + NetManager + entrypoint
-├── tests/                 # pytest E2E suite
-├── .env.example           # configuration template (copy to .env)
+├── Makefile                    # `make install`, plus the vm-* targets
+├── cmd/oak-dev/                # the CLI's cobra commands, one file per command
+├── internal/                   # components registry, config, topology, target, doctor, build, ...
+├── skills/oak-dev/             # the Agent Skill `oak-dev skill install` embeds and installs
+├── compose/worker.yml          # dockerized worker (own compose project, shared network)
+├── compose/override-*.yml      # macOS-specific fixes + live/debug overlays
+├── worker/                     # DinD worker image: NodeEngine + NetManager + entrypoint
+├── fixtures/                   # ready-to-deploy SLA JSON for `oak application create -f`
+├── .vscode/launch.json         # debugger attach configs per component
+├── tests/                      # pytest E2E suite
+├── oak-dev.yaml.example        # config template (copy to oak-dev.yaml)
+├── .env.example                # env config template (copy to .env)
 └── pytest.ini
 ```
 
 The orchestrator services themselves are NOT in this repo - they are built and
-started from your local `oakestra` checkout (`OAKESTRA_REPO` in `.env`). The
-worker image builds NodeEngine from that same checkout via a Docker build
-context, so whatever you have on disk is what gets tested.
+started from your local `oakestra` checkout (`OAKESTRA_REPO`). The worker
+image builds NodeEngine from that same checkout via a Docker build context, so
+whatever you have on disk is what gets tested.
 
-## How it works
-
-- The root and cluster stacks are started from the compose files in
-  `$OAKESTRA_REPO`, with the lean overrides applied (no addons, no
-  observability, no dashboard) to keep startup fast and resource usage low.
-- `compose/override-*-mongo.yml` pin MongoDB to 8.2: the 8.0 images used
-  upstream refuse to start on Linux kernel 6.19+
-  ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)), which is
-  what OrbStack and recent Docker Desktop VMs ship.
-- `compose/override-*-servicemanager.yml` adapt the oakestra-net components to
-  the shared-network topology: the cluster service manager runs inside
-  cluster_manager's network namespace (upstream authorizes its calls to the
-  root by source IP, assuming both cluster services share one host IP), it
-  points at `root_service_manager` directly instead of the host IP, and both
-  service manager images are pinned to the same oakestra-net release as the
-  worker's NetManager binary.
-- All compose projects join one shared Docker network named `oakestra`, so
-  containers resolve each other by name (`system_manager`, `cluster_manager`,
-  `mqtt`) - no IP configuration needed.
-- The worker is a privileged container running NodeEngine, NetManager, and its
-  own containerd. Workloads deployed by Oakestra run inside that containerd
-  (namespace `oakestra`). `socat` forwards the cluster and MQTT ports to
-  localhost inside the container because NodeEngine expects both on a single
-  address.
-
-## Daily workflow
-
-| Goal | Command |
-|---|---|
-| Start everything | `make up` |
-| Run the E2E suite | `make test` |
-| Stop everything | `make down` |
-| Start/stop one stack | `make up-root` / `make down-cluster` |
-| Show running containers | `make status` |
-| Tail all root / cluster logs | `make logs-root` / `make logs-cluster` |
-| Follow one container | `make log s=system_manager` |
-| Rebuild after a change | `make rebuild s=system_manager` |
-| Rebuild a cluster service | `make rebuild-cluster s=cluster_manager` |
-| Rebuild the shared Go scheduler (both stacks) | `make rebuild-scheduler` |
-| Restart without rebuild | `make restart s=system_manager` |
-| Worker logs / shell | `make worker-logs` / `make worker-shell` |
-| Simulate multiple workers | `make worker-scale n=3` |
-| Open the API docs | `make open` |
-| Wipe volumes (fresh start) | `make clean` |
-
-`make help` lists everything.
-
-## Iterating on Oakestra code
-
-### Python services (system_manager, cluster_manager, resource abstractors)
-
-The services run under gunicorn, so each change needs a rebuild. The pip layer
-is cached, so this takes ~10-15 seconds:
-
-```bash
-# edit $OAKESTRA_REPO/root_orchestrator/system-manager-python/...
-make rebuild s=system_manager
-make log s=system_manager
-make test-smoke            # or make test for the full lifecycle
-```
-
-### Scheduler (Go, shared between root and cluster)
-
-```bash
-# edit $OAKESTRA_REPO/scheduler/...
-make rebuild-scheduler
-make test
-```
-
-### NodeEngine (go_node_engine)
-
-The worker image builds NodeEngine from your local source, so:
-
-```bash
-# edit $OAKESTRA_REPO/go_node_engine/...
-make worker-up             # rebuilds the image (cached Go layers) and restarts
-make worker-logs
-make test
-```
-
-### oakestra-net
-
-By default the network services (`root_service_manager`,
-`cluster_service_manager`) use pre-built GHCR images, and the worker downloads
-the NetManager release matching `$OAKESTRA_REPO/version.txt` (override with
-`NETMANAGER_VERSION` in `.env`). To build the service managers from a local
-`oakestra-net` checkout, uncomment the `override-local-service-manager.yml`
-lines in the `Makefile`.
-
-### Shared Python libraries
-
-If your branch changes `oakestra_utils_library` or `resource_abstractor_client`,
-set `LIB_BRANCH` in `.env` to your branch name - otherwise images build against
-the `develop` versions of the libraries.
-
-## Real worker in an OrbStack VM
+## Real worker in an OrbStack VM (macOS only)
 
 The dockerized worker covers most testing. For cases that need a real
 systemd-managed NodeEngine (installer changes, host-level behavior), use a
-lightweight OrbStack Linux VM. The VM reaches the Mac at `host.orb.internal`,
-so no IP configuration is needed.
+lightweight OrbStack Linux VM instead - the one thing that stays in the
+`Makefile` rather than moving into `oak-dev`. The VM reaches the Mac at
+`host.orb.internal`, so no IP configuration is needed.
 
 ```bash
-make vm-create        # one-time: create VM + install released NodeEngine (alpha)
-make vm-up            # start NodeEngine
-make vm-logs          # tail logs
-make vm-down          # stop NodeEngine
-make vm-shell         # shell into the VM
-make vm-delete        # remove the VM entirely
+make vm-create   # one-time: create VM + install released NodeEngine (alpha)
+make vm-up       # start NodeEngine
+make vm-logs     # tail logs
+make vm-down     # stop NodeEngine
+make vm-shell    # shell into the VM
+make vm-delete   # remove the VM entirely
 ```
 
-To test local `go_node_engine` changes in the VM instead:
-
-```bash
-make vm-create-local  # one-time: VM + containerd + binaries built from source
-make vm-up
-# edit go_node_engine/... then:
-make vm-rebuild       # recompile, push binary, restart (~10-15s per cycle)
-```
-
-Binaries are cross-compiled on the Mac for the VM's architecture and pushed
-with `orbctl push` - no Go toolchain needed inside the VM.
-
-Use a different VM name with `make vm-create WORKER_VM=my-vm`.
+To test local `go_node_engine` changes in the VM instead, use
+`make vm-create-local` (VM + containerd + binaries built from source), then
+`make vm-rebuild` after each edit (~10-15s per cycle) - binaries are
+cross-compiled on the Mac and pushed with `orbctl push`, no Go toolchain
+needed inside the VM. Use a different VM name with `make vm-create
+WORKER_VM=my-vm`.
 
 ## Manual smoke testing
 
@@ -213,23 +320,7 @@ curl -s http://localhost:10000/api/clusters/active | python3 -m json.tool
 curl -s http://localhost:11011/api/v1/resources/ | python3 -m json.tool
 
 # Workloads running inside the worker's containerd
-docker compose -f compose/worker.yml exec worker ctr -n oakestra containers ls
+oak-dev shell worker -- ctr -n oakestra containers ls
 ```
 
 Swagger UI: http://localhost:10000/api/docs
-
-## Configuration reference
-
-All settings live in `.env` (copy from `.env.example`):
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `OAKESTRA_REPO` | `../oakestra` | Path to the oakestra checkout to test |
-| `LIB_BRANCH` | `develop` | Branch of the shared Python libraries used in image builds |
-| `NETMANAGER_VERSION` | `alpha-` + contents of `version.txt` | NetManager release baked into the worker (develop maps to alpha tags) |
-| `CLUSTER_NAME` | `test-cluster` | Cluster name registered at the root |
-| `CLUSTER_LOCATION` | Berlin coords | lat,lon,altitude of the cluster |
-| `OAK_ROOT_API` | `http://localhost:10000` | Root API URL used by the tests |
-| `OAK_CLUSTER_API` | `http://localhost:10100` | Cluster manager URL used by the tests |
-| `OAK_READY_TIMEOUT` | `180` | Seconds to wait for boot/registration |
-| `OAK_DEPLOY_TIMEOUT` | `300` | Seconds to wait for instances to reach RUNNING |

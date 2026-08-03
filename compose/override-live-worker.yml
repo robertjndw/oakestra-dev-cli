@@ -1,0 +1,14 @@
+# Phase 1c live-mount: swap NodeEngine + nodeengined for host cross-compiled
+# binaries via PATH, so worker/docker-entrypoint.sh's bare `NodeEngine` /
+# `nodeengined` invocations resolve to ours without any script changes.
+# `oak-dev go nodeengine` rebuilds both into build/linux_${GOARCH}/ and then
+# `oak-dev worker reload` sends nodeengined a TERM; docker-entrypoint.sh's
+# supervisor loop relaunches it in place. The container is never recreated,
+# which matters: a new container means a new node ID and instances stuck in
+# NODE_SCHEDULED forever (CLAUDE.md).
+services:
+  worker:
+    volumes:
+      - ${OAK_DEV_ROOT}/build/linux_${GOARCH}:/oak-bin:ro
+    environment:
+      - PATH=/oak-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

@@ -44,7 +44,9 @@ def wait_until(check, timeout, interval=3, desc="condition"):
             last_error = None
         except AssertionError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - intentional: retry any transient
+            # failure (connection refused, timeout, ...) until `deadline`; only
+            # AssertionError is fail-fast (see assert_not_failed's contract above).
             last_error = e
         time.sleep(interval)
     message = f"Timed out after {timeout}s waiting for {desc}"
@@ -190,8 +192,7 @@ def register_app(client, app_name, microservices):
         services = json_body(services_resp)
         assert len(services) == len(microservices), f"expected services, got: {services}"
         service_ids = {
-            s.get("microservice_name"): (s.get("microserviceID") or object_id(s))
-            for s in services
+            s.get("microservice_name"): (s.get("microserviceID") or object_id(s)) for s in services
         }
     except Exception:
         client.delete(f"/api/application/{app_id}")

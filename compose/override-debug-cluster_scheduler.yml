@@ -1,0 +1,6 @@
+# Phase 1f debug overlay for cluster_scheduler - see override-debug-root_scheduler.yml.
+services:
+  cluster_scheduler:
+    entrypoint: ["/oak-bin/dlv", "exec", "--headless", "--listen=:2345", "--api-version=2", "--accept-multiclient", "--continue", "/oak-bin/scheduler"]
+    ports:
+      - "2346:2345"

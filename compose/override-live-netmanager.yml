@@ -1,0 +1,24 @@
+# Live-mount for netmanager. NetManager is compiled from a local oakestra-net
+# checkout instead of the worker image's release-fetch stage (see
+# worker/Dockerfile's NETMANAGER_SOURCE build arg), and the cross-compiled
+# binary shadows /usr/local/bin/NetManager via PATH - the same trick
+# override-live-worker.yml already uses for NodeEngine/nodeengined, so both
+# can be live at once without conflicting (docker compose merges identical
+# volumes/environment/build entries across -f files).
+#
+# `oak-dev reload netmanager` rebuilds the binary into build/linux_${GOARCH}/
+# and restarts NetManager (and nodeengined alongside it, since NodeEngine only
+# dials NetManager's unix socket once, at startup) in place - the container is
+# never recreated, which matters: a new container means a new node ID and
+# instances stuck in NODE_SCHEDULED forever (CLAUDE.md).
+services:
+  worker:
+    build:
+      additional_contexts:
+        oakestra-net-src: ${OAKESTRA_NET_REPO}/node-net-manager
+      args:
+        NETMANAGER_SOURCE: local
+    volumes:
+      - ${OAK_DEV_ROOT}/build/linux_${GOARCH}:/oak-bin:ro
+    environment:
+      - PATH=/oak-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

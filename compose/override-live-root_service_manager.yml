@@ -1,0 +1,29 @@
+# Live-mount for root_service_manager. Unlike system_manager/cluster_manager,
+# upstream doesn't run this under gunicorn at all - service_manager.py calls
+# eventlet.wsgi.server(...) directly from `if __name__ == "__main__":`, and
+# neither the image nor requirements.txt has gunicorn in it. `pip install`
+# it at container start, same opt-in-tooling approach `oak-dev debug` already
+# uses for debugpy, rather than carrying a fork of requirements.txt here.
+#
+# `-k eventlet` matches the app's own declared async_mode; `[::]` matches
+# upstream's `eventlet.listen(("::", ...), family=AF_INET6)`. `--workers 1`
+# keeps the shim's mongo_init to one invocation - see compose/shims/oak_root_sm.py
+# for why gunicorn can't just import service_manager:app directly.
+#
+# Port is 10099, not this image's default MY_PORT=10100: upstream's root
+# compose overrides it, and system_manager reaches this service via
+# NET_PLUGIN_PORT=10099. ${VAR} in `command:` interpolates against the host
+# shell at `docker compose` invocation time, not this container's own
+# environment: block (CLAUDE.md), so it's hardcoded here rather than read
+# from MY_PORT.
+services:
+  root_service_manager:
+    working_dir: /src
+    environment:
+      - PYTHONPATH=/oak-shim
+    volumes:
+      - ${OAKESTRA_NET_REPO}/root-service-manager/service-manager:/src
+      - ${OAK_DEV_ROOT}/compose/shims:/oak-shim:ro
+    command: >
+      sh -c "pip install --quiet --disable-pip-version-check gunicorn &&
+      exec gunicorn --reload -k eventlet --workers 1 --bind [::]:10099 oak_root_sm:app"

@@ -1,0 +1,21 @@
+# Live-mount for cluster_service_manager - see
+# override-live-root_service_manager.yml for the general eventlet/gunicorn
+# shape and why gunicorn is pip-installed at container start.
+#
+# No shim module needed here, unlike root_service_manager: this service's
+# mongo_init(app) and mqtt_init(app) both run at module import time, so
+# `service_manager:app` is directly importable as a gunicorn target.
+#
+# Deliberately no `ports:` here: this container runs inside cluster_manager's
+# network namespace (network_mode: "service:cluster_manager", see
+# compose/override-cluster-servicemanager.yml, which !resets its own ports to
+# empty and publishes 10110 through cluster_manager instead) - adding one here
+# would conflict with sharing that namespace.
+services:
+  cluster_service_manager:
+    working_dir: /src
+    volumes:
+      - ${OAKESTRA_NET_REPO}/cluster-service-manager/service-manager:/src
+    command: >
+      sh -c "pip install --quiet --disable-pip-version-check gunicorn &&
+      exec gunicorn --reload -k eventlet --workers 1 --bind [::]:10110 service_manager:app"

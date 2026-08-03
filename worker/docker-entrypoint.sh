@@ -78,24 +78,87 @@ cat > /etc/netmanager/netcfg.json <<EOF
 }
 EOF
 
-# Start NetManager - output goes to stdout so failures are visible in compose logs
-NetManager &
-NM_PID=$!
+# Start NetManager under its own supervised restart loop, same shape as
+# nodeengined's below - `oak-dev reload netmanager` sends it a TERM (pkill -x
+# NetManager) to pick up a freshly cross-compiled binary from the /oak-bin
+# mount (see compose/override-live-netmanager.yml) without recreating this
+# container. `oak-dev debug netmanager` sets OAK_DEV_DEBUG_NETMANAGER=1 (see
+# compose/override-debug-netmanager.yml) to run it under Delve instead -
+# listening on :2346, not :2345, since nodeengined's own debug listener below
+# already claims that port and both can be debugged at once.
+#
+# Runs as a background job of this script (PID 1) rather than inline, so PID 1
+# can go on to start nodeengined; its own `trap` is what lets the outer trap
+# (below) propagate a shutdown signal down to whichever NetManager/dlv process
+# is currently running inside it.
+supervise_netmanager() {
+    # `|| true` on each step: under `set -e`, kill/wait failing partway
+    # through this trap (e.g. the child already gone) would abort the trap
+    # itself before reaching `exit 0`.
+    trap 'kill -TERM "$NM_PID" 2>/dev/null || true; wait "$NM_PID" 2>/dev/null || true; exit 0' TERM INT
+    while true; do
+        if [ -n "${OAK_DEV_DEBUG_NETMANAGER:-}" ]; then
+            dlv exec --headless --listen=:2346 --api-version=2 --accept-multiclient --continue /oak-bin/NetManager &
+        else
+            NetManager &
+        fi
+        NM_PID=$!
+        # `if wait ...` rather than a bare `wait` - under `set -e`, a bare
+        # `wait` returning the child's non-zero exit status would kill this
+        # whole script (and so the container) the moment NetManager exits for
+        # ANY reason, defeating the point of the loop. `set -e` exempts
+        # commands used as an if/while condition, which is why this form
+        # survives it and a bare `wait "$NM_PID"` does not.
+        if wait "$NM_PID"; then code=0; else code=$?; fi
+        echo "[oakestra] NetManager exited (code $code) - relaunching"
+        sleep 1
+    done
+}
+supervise_netmanager &
+NM_SUP_PID=$!
 
-echo "[oakestra] Waiting for NetManager socket (pid ${NM_PID})..."
+echo "[oakestra] Waiting for NetManager socket (supervisor pid ${NM_SUP_PID})..."
 for i in $(seq 30); do
-    if ! kill -0 "${NM_PID}" 2>/dev/null; then
-        echo "[oakestra] ERROR: NetManager process exited early (exit code: $?)" >&2
-        wait "${NM_PID}"; echo "[oakestra] NetManager exit status: $?" >&2
+    if ! kill -0 "${NM_SUP_PID}" 2>/dev/null; then
+        echo "[oakestra] ERROR: NetManager supervisor exited early" >&2
         exit 1
     fi
     [ -S /etc/netmanager/netmanager.sock ] && break
     sleep 1
 done
 if [ ! -S /etc/netmanager/netmanager.sock ]; then
-    echo "[oakestra] ERROR: NetManager socket not ready after 30s" >&2
+    echo "[oakestra] ERROR: NetManager socket not ready after 30s (it may be crash-looping - check \`oak-dev logs worker\`)" >&2
     exit 1
 fi
 echo "[oakestra] NetManager ready."
 
-exec nodeengined
+# Supervised rather than exec'd: `oak-dev worker reload` sends nodeengined a
+# TERM (docker compose exec worker pkill nodeengined) to pick up a freshly
+# cross-compiled binary from the /oak-bin mount (see compose/override-live-
+# worker.yml) without recreating this container. Recreating would mint a new
+# node ID on the next cluster handshake and strand any scheduled instances in
+# NODE_SCHEDULED forever (see CLAUDE.md). The trap below still lets a normal
+# `docker compose stop`/`down` (SIGTERM to PID 1) shut down promptly, and
+# forwards it to the NetManager supervisor above too. `|| true` on each step
+# for the same set -e reason as the trap in supervise_netmanager above.
+trap 'kill -TERM "$NE_PID" "$NM_SUP_PID" 2>/dev/null || true; wait "$NE_PID" "$NM_SUP_PID" 2>/dev/null || true; exit 0' TERM INT
+
+# `oak-dev debug nodeengine` sets OAK_DEV_DEBUG=1 (see
+# compose/override-debug-worker.yml) to run the daemon under Delve instead of
+# directly - everything above (containerd, NetManager, port forwarding) still
+# needs to happen first, so this can't just be a different compose entrypoint.
+while true; do
+    if [ -n "${OAK_DEV_DEBUG:-}" ]; then
+        dlv exec --headless --listen=:2345 --api-version=2 --accept-multiclient --continue /oak-bin/nodeengined &
+    else
+        nodeengined &
+    fi
+    NE_PID=$!
+    # See the comment on the equivalent NetManager loop above: this must not
+    # be a bare `wait` under `set -e`, or a crash (or even a normal
+    # `pkill nodeengined` reload) would exit the whole script instead of
+    # being caught and relaunched here.
+    if wait "$NE_PID"; then code=0; else code=$?; fi
+    echo "[oakestra] nodeengined exited (code $code) - relaunching"
+    sleep 1
+done

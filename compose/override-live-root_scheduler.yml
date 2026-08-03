@@ -1,0 +1,11 @@
+# Phase 1b live-mount: run the scheduler from a host cross-compiled binary
+# instead of the image's baked one. `oak-dev go scheduler` rebuilds it with
+# CGO_ENABLED=0 GOOS=linux (seconds on Apple Silicon since the target is
+# already linux/arm64) and restarts this container; the image is never
+# rebuilt. Mount the directory, not the file: go build writes a new inode, and
+# a file bind-mount would keep resolving the old one.
+services:
+  root_scheduler:
+    volumes:
+      - ${OAK_DEV_ROOT}/build/linux_${GOARCH}:/oak-bin:ro
+    entrypoint: ["/oak-bin/scheduler"]

@@ -1,0 +1,10 @@
+# Phase 1f: `oak-dev debug scheduler` layers this on top of
+# override-live-root_scheduler.yml, so /oak-bin already has a -gcflags="all=-N
+# -l" build plus the cross-compiled dlv binary (oak-dev installs it there on
+# first use). --continue starts the process immediately; VS Code's attach
+# config then sets breakpoints and can pause it at any point.
+services:
+  root_scheduler:
+    entrypoint: ["/oak-bin/dlv", "exec", "--headless", "--listen=:2345", "--api-version=2", "--accept-multiclient", "--continue", "/oak-bin/scheduler"]
+    ports:
+      - "2345:2345"

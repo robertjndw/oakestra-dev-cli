@@ -1,0 +1,49 @@
+# oak-dev's configuration. Copy to oak-dev.yaml (gitignored, like .env) and
+# adjust. Every key has a default, so an absent oak-dev.yaml still works: full
+# stack, nothing mounted from source, everything running its baked image.
+#
+# .env takes priority over this file for the settings both cover
+# (OAKESTRA_REPO, CLUSTER_NAME, CLUSTER_LOCATION, LIB_BRANCH,
+# NETMANAGER_VERSION).
+
+oakestra_repo: ../oakestra
+oakestra_net_repo: ../oakestra-net  # only needed for root_service_manager/
+                                     # cluster_service_manager/netmanager
+libs_repo: null                # optional: a local oakestra_utils_library checkout
+
+cluster:
+  name: test-cluster
+  location: "52.5200,13.4050,100"
+
+workers: 1
+
+# Components to run from your working tree instead of the baked image. Python
+# entries reload on save (gunicorn --reload); Go entries need `oak-dev reload
+# <name>`, or `oak-dev dev` to do it automatically on every save.
+#
+# You rarely need to edit this by hand: `oak-dev reload <component>` and
+# `oak-dev debug <component>` add what they need here themselves. `oak-dev
+# status` shows the current set.
+#
+# Names, with their aliases: system_manager (sm), jwt_generator (jwt),
+# root_resource_abstractor (rra), cluster_manager (cm),
+# cluster_resource_abstractor (cra), scheduler (sched), nodeengine (ne),
+# root_service_manager (rsm), cluster_service_manager (csm), netmanager (nm).
+live: [system_manager, cluster_manager]
+
+# Default scope. full | root | cluster | worker - `worker` also brings up
+# cluster, since the worker registers against it. `oak-dev up --stack X`
+# overrides this and makes X sticky until the next plain `oak-dev down`;
+# `oak-dev status` always shows which scope is in effect and why.
+stack: full
+
+# Off by default, matching the lean compose overrides this repo ships (no
+# addons/observability/dashboard). Flip on to add them back.
+profiles:
+  dashboard: false
+  observability: false
+  addons: false
+
+versions:
+  netmanager: auto      # "auto" = alpha-<version.txt>, or pin an explicit tag
+  lib_branch: develop

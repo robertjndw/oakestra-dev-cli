@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: go build / vet / gofmt / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - run: go build ./...
+
+      - run: go vet ./...
+
+      - name: gofmt
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "gofmt needs to be run on:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      # internal/watch and internal/multilog are concurrent - always race-test.
+      - run: go test ./... -race
+
+  lint:
+    name: golangci-lint / ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+      # setup-uv has no "v9" moving major tag (its last one is v7); pin the
+      # exact release instead.
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - run: uvx ruff check tests/
+
+      - run: uvx ruff format --check tests/

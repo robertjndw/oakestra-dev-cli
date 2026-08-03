@@ -1,0 +1,9 @@
+# Phase 1f debug overlay for root_resource_abstractor - see override-debug-system_manager.yml.
+services:
+  root_resource_abstractor:
+    command: >
+      sh -c "pip install --quiet --disable-pip-version-check debugpy &&
+      exec python -m debugpy --listen 0.0.0.0:5999 -m gunicorn --workers 1
+      --bind [::]:11011 resource_abstractor:app"
+    ports:
+      - "5680:5999"

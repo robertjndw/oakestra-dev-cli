@@ -1,0 +1,7 @@
+# Phase 1a live-mount for jwt_generator - see override-live-system_manager.yml.
+services:
+  jwt_generator:
+    working_dir: /src
+    volumes:
+      - ${OAKESTRA_REPO}/root_orchestrator/jwt-generator:/src
+    command: gunicorn --reload --bind 0.0.0.0:10011 jwt_generator:app

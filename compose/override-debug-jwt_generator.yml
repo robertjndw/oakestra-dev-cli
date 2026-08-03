@@ -1,0 +1,9 @@
+# Phase 1f debug overlay for jwt_generator - see override-debug-system_manager.yml.
+services:
+  jwt_generator:
+    command: >
+      sh -c "pip install --quiet --disable-pip-version-check debugpy &&
+      exec python -m debugpy --listen 0.0.0.0:5999 -m gunicorn --workers 1
+      --bind 0.0.0.0:10011 jwt_generator:app"
+    ports:
+      - "5679:5999"

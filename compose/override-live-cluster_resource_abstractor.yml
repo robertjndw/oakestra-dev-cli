@@ -1,0 +1,10 @@
+# Phase 1a live-mount for the cluster resource abstractor - see
+# override-live-root_resource_abstractor.yml. Same source tree as the root
+# one; both containers are built from resource-abstractor/, just on different
+# ports, so editing it live affects both.
+services:
+  cluster_resource_abstractor:
+    working_dir: /src
+    volumes:
+      - ${OAKESTRA_REPO}/resource-abstractor:/src
+    command: gunicorn --reload --bind [::]:11012 resource_abstractor:app

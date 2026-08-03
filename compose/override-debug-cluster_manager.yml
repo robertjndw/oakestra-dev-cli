@@ -1,0 +1,9 @@
+# Phase 1f debug overlay for cluster_manager - see override-debug-system_manager.yml.
+services:
+  cluster_manager:
+    command: >
+      sh -c "pip install --quiet --disable-pip-version-check debugpy &&
+      exec python -m debugpy --listen 0.0.0.0:5999 -m gunicorn --workers 1
+      --bind [::]:10100 cluster_manager:app"
+    ports:
+      - "5681:5999"
