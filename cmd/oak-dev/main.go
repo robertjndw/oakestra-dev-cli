@@ -1,4 +1,4 @@
-// Command oak-dev is the developer-workflow CLI for oakestra-macos-testing:
+// Command oak-dev is the developer-workflow CLI for oakestra-dev-cli:
 // bringing up partial stacks, live-mounting source instead of rebuilding
 // images, cross-compiling Go services, attaching debuggers, and watching the
 // control plane. It is a separate binary from `oak` (oakestra-cli, the

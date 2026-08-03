@@ -24,7 +24,7 @@ const (
 
 // annotationNoConfig marks a command (and, via hasNoConfigAnnotation, all of
 // its subcommands) as exempt from loadConfigInto's "is this an
-// oakestra-macos-testing checkout" requirement. `skill` and `completion` both
+// oakestra-dev-cli checkout" requirement. `skill` and `completion` both
 // need to run from *other* repos - that's the whole point of `oak-dev skill
 // install` - so neither can require the config this repo's checkout provides.
 const annotationNoConfig = "oak-dev/no-config"
@@ -66,7 +66,7 @@ unambiguous prefix (cluster_man). Configuration lives in oak-dev.yaml.`,
 	root.PersistentFlags().StringVar(&stackFlag, "stack", "",
 		"limit every command to a scope: full|root|cluster|worker (default: oak-dev.yaml's stack:)")
 	root.PersistentFlags().StringVarP(&repoRoot, "repo-root", "C", "",
-		"run as if from this oakestra-macos-testing checkout (default: the current directory)")
+		"run as if from this oakestra-dev-cli checkout (default: the current directory)")
 	_ = root.RegisterFlagCompletionFunc("stack",
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return components.Scopes(), cobra.ShellCompDirectiveNoFileComp
@@ -155,7 +155,7 @@ func loadConfigInto(stackFlag, repoRoot *string) func(*cobra.Command, []string) 
 			return err
 		}
 		if _, err := os.Stat(filepath.Join(root, "compose", "worker.yml")); err != nil {
-			return fmt.Errorf("%s is not an oakestra-macos-testing checkout (no compose/worker.yml).\n"+
+			return fmt.Errorf("%s is not an oakestra-dev-cli checkout (no compose/worker.yml).\n"+
 				"cd there, or point at it with -C <path>", root)
 		}
 

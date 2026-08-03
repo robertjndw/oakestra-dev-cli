@@ -30,7 +30,7 @@ func TestSpecString(t *testing.T) {
 // Rel is what keeps a golden assertion from embedding the absolute path of
 // the checkout it happened to run in.
 func TestSpecRel(t *testing.T) {
-	root := "/Users/x/oakestra-macos-testing"
+	root := "/Users/x/oakestra-dev-cli"
 	s := Spec{Name: "docker", Args: []string{
 		"compose", "-f", root + "/compose/worker.yml", "restart", "worker",
 	}}

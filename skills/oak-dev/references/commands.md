@@ -10,7 +10,7 @@ is always authoritative if this drifts.
   (written to `.generated/stack`) and reused by later commands until the next
   plain `down` clears it.
 - `-C, --repo-root <path>` - run as if invoked from this
-  `oakestra-macos-testing` checkout. Required whenever the current directory
+  `oakestra-dev-cli` checkout. Required whenever the current directory
   is a different repo.
 
 ## Start and stop

@@ -9,7 +9,7 @@ import (
 )
 
 // newSkillCmd is the one command that must work outside an
-// oakestra-macos-testing checkout - most sessions that want it are editing a
+// oakestra-dev-cli checkout - most sessions that want it are editing a
 // *different* repo (../oakestra, ../oakestra-net, oakestra-deploy) and just
 // need the skill planted there. See wireCompletionInstall/annotationNoConfig
 // in root.go for how it opts out of loadConfigInto.
@@ -29,11 +29,11 @@ directory your agent(s) actually read skills from:
   .agents/skills/oak-dev   Codex, Cursor, Gemini CLI, Copilot, Zed, OpenCode
 
 Unlike every other command here, this works from any directory - it never
-needs an oakestra-macos-testing checkout or -C. Run it from wherever you're
+needs an oakestra-dev-cli checkout or -C. Run it from wherever you're
 actually working: ../oakestra, ../oakestra-net, oakestra-deploy.
 
 The same skill installs without a Go toolchain via
-` + "`npx skills add oakestra/oakestra-macos-testing`" + ` - see https://skills.sh.`,
+` + "`npx skills add oakestra/oakestra-dev-cli`" + ` - see https://skills.sh.`,
 		Example: `  oak-dev skill install                 # this directory, agent(s) auto-detected
   oak-dev skill install --global        # ~/.claude and/or ~/.agents
   oak-dev skill install --target all    # both, regardless of detection

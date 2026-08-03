@@ -48,7 +48,7 @@ type fileConfig struct {
 
 // Config is the fully resolved, ready-to-use configuration.
 type Config struct {
-	RepoRoot string // absolute path to this repo (oakestra-macos-testing checkout)
+	RepoRoot string // absolute path to this repo (oakestra-dev-cli checkout)
 
 	OakestraRepo      string // absolute
 	OakestraNetRepo   string // absolute
@@ -86,7 +86,7 @@ func SetLastStack(repoRoot, stack string) error {
 	return os.WriteFile(StackStatePath(repoRoot), []byte(stack), 0o644)
 }
 
-// Load resolves configuration relative to repoRoot (the oakestra-macos-testing
+// Load resolves configuration relative to repoRoot (the oakestra-dev-cli
 // checkout - normally the process cwd).
 func Load(repoRoot string) (*Config, error) {
 	repoRoot, err := filepath.Abs(repoRoot)

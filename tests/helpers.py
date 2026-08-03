@@ -130,7 +130,7 @@ def build_sla(app_name, microservices):
                 "applicationID": "",
                 "application_name": app_name,
                 "application_namespace": "test",
-                "application_desc": "oakestra-macos-testing E2E app",
+                "application_desc": "oakestra-dev-cli E2E app",
                 "microservices": microservices,
             }
         ],

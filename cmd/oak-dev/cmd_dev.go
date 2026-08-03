@@ -207,7 +207,7 @@ func reloadOnChange(ctx context.Context, w io.Writer, cfg *config.Config, c comp
 // The child is pinned to this run's repo root and scope with -C/--stack rather
 // than inheriting them from the process environment: the watcher's working
 // directory is the *source* checkout ($OAKESTRA_REPO), where a bare `oak-dev
-// reload` would fail its "is this an oakestra-macos-testing checkout" test, and
+// reload` would fail its "is this an oakestra-dev-cli checkout" test, and
 // --stack keeps a `dev --stack root` session from reloading through whatever
 // scope .generated/stack happens to hold.
 func runTagged(ctx context.Context, w io.Writer, cfg *config.Config, self string, args ...string) error {

@@ -1,7 +1,7 @@
 # Troubleshooting
 
 Runtime failure modes you can hit while operating the stack - not
-architecture (that's `AGENTS.md` in the `oakestra-macos-testing` checkout,
+architecture (that's `AGENTS.md` in the `oakestra-dev-cli` checkout,
 for anyone changing oak-dev itself).
 
 ## Never restart/recreate the worker while deployment tests run

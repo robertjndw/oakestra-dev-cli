@@ -1,4 +1,4 @@
-# oakestra-macos-testing
+# oakestra-dev-cli
 
 Local dev + testing setup for [Oakestra](https://github.com/oakestra/oakestra) on macOS
 (Linux-compatible - only the OrbStack VM path is Mac-only).
@@ -77,7 +77,7 @@ oak-dev skill status                      # is it installed, and up to date?
 ```
 
 No Go toolchain needed? The same skill installs via
-[skills.sh](https://skills.sh): `npx skills add oakestra/oakestra-macos-testing`.
+[skills.sh](https://skills.sh): `npx skills add oakestra/oakestra-dev-cli`.
 See `oak-dev skill --help` for `--global`/`--target`, and
 [skills/oak-dev/SKILL.md](skills/oak-dev/SKILL.md) for what it covers.
 

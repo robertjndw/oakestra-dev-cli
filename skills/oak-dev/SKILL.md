@@ -13,7 +13,7 @@ description: >-
   never mentioned by name. Also use it when working in the oakestra,
   oakestra-net or oakestra-deploy repos and a change needs verifying against a
   running stack.
-compatibility: Requires macOS with Docker (OrbStack), the oak-dev CLI on PATH, and an oakestra-macos-testing checkout
+compatibility: Requires macOS with Docker (OrbStack), the oak-dev CLI on PATH, and an oakestra-dev-cli checkout
 license: Apache-2.0
 ---
 
@@ -27,16 +27,16 @@ source and see the change live without rebuilding images.
 
 ## Locating the CLI
 
-`oak-dev` refuses to run outside an `oakestra-macos-testing` checkout (it
+`oak-dev` refuses to run outside an `oakestra-dev-cli` checkout (it
 looks for `compose/worker.yml`), which matters because most sessions happen
 while editing a **different** repo (`oakestra`, `oakestra-net`,
 `oakestra-deploy`).
 
 1. Check the binary exists: `command -v oak-dev`. If missing, find the
-   `oakestra-macos-testing` checkout and run `make install` in it.
+   `oakestra-dev-cli` checkout and run `make install` in it.
 2. If the current directory is not that checkout, find it - conventionally a
    sibling directory of the repo you're in - and pass it with the persistent
-   `-C` flag on every command: `oak-dev -C ../oakestra-macos-testing status`.
+   `-C` flag on every command: `oak-dev -C ../oakestra-dev-cli status`.
 3. If several candidates exist or none can be found, ask rather than guess.
 
 ## Task router

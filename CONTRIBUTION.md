@@ -1,6 +1,6 @@
 # Contributing
 
-This is background knowledge for working on `oakestra-macos-testing` itself -
+This is background knowledge for working on `oakestra-dev-cli` itself -
 the `oak-dev` CLI, the compose overrides, and the worker image. If you're
 just using the stack to test changes to `oakestra`, you want
 [README.md](README.md) instead. `CLAUDE.md` goes deeper still (exact file
