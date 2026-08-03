@@ -59,10 +59,12 @@ The venv lives at `.venv` (repo root) and is created automatically by `oak-dev d
 
 ## Developing oak-dev itself
 
-No CI and no Go lint config - `go vet`/`gofmt`/tests are the only gate:
+`.github/workflows/ci.yml` runs on every PR: a `go` job (build/vet/gofmt/test), a `lint` job (`golangci-lint`, config in `.golangci.yml`; `ruff check`/`ruff format --check` on `tests/`, config in `pyproject.toml`), and an `e2e-smoke` job that clones `oakestra@develop` alongside this repo, brings the stack up on an ubuntu-latest runner, and runs `oak-dev test --smoke`. Match all of that locally before pushing:
 ```bash
 go build ./... && go vet ./... && gofmt -l .
 go test ./... -race        # internal/watch and multilog are concurrent - always run with -race
+golangci-lint run ./...
+uvx ruff check tests/ && uvx ruff format --check tests/
 make install                # rebuild the installed binary to manually exercise a change
 ```
 Tests are stdlib-only (no testify), white-box (`package x`, not `x_test`), table-driven, using `t.TempDir()`/`t.Setenv()`/`t.Helper()` - see `internal/config/config_test.go`.

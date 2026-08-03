@@ -91,7 +91,7 @@ Anything after -- goes straight to pytest or go test.`,
 			if err := testsuite.Lock(cfg); err != nil {
 				return err
 			}
-			defer testsuite.Unlock(cfg)
+			defer func() { _ = testsuite.Unlock(cfg) }()
 
 			return tl.tests.Run(smoke, passthrough...)
 		},

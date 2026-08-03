@@ -52,8 +52,8 @@ With no arguments, reloads every component in live:.`,
 				return err
 			}
 			if len(targets) == 0 {
-				return fmt.Errorf("nothing to reload: live: is empty in oak-dev.yaml.\n" +
-					"Name a component instead (`oak-dev reload scheduler`) and it will be added for you.")
+				return fmt.Errorf("nothing to reload: live: is empty in oak-dev.yaml. " +
+					"Name a component instead (`oak-dev reload scheduler`) and it will be added for you")
 			}
 
 			// Naming a component that isn't in scope is a mistake worth

@@ -1,0 +1,16 @@
+version: "2"
+
+# Default linter set (errcheck, govet, ineffassign, staticcheck, unused) - see
+# AGENTS.md's "Developing oak-dev itself" section for why: go vet/gofmt/tests
+# were the only gate before this file existed, and this keeps that bar rather
+# than raising it with an opinionated preset.
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        # Unchecked writes to a writer this package already owns (stdout, or a
+        # caller-supplied io.Writer used purely for progress output) - checking
+        # these adds noise without adding safety.
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - fmt.Fprint

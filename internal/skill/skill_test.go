@@ -216,7 +216,7 @@ func TestFrontmatter(t *testing.T) {
 		t.Errorf("name is %d chars, spec max is 64", len(fm.Name))
 	}
 	for _, r := range fm.Name {
-		if !(r == '-' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+		if r != '-' && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 			t.Errorf("name %q contains %q - only lowercase letters, digits and hyphens are allowed", fm.Name, r)
 			break
 		}

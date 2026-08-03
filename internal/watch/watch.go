@@ -64,7 +64,7 @@ func Run(ctx context.Context, o Options, onChange func()) error {
 	if err != nil {
 		return err
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	if err := addTree(w, o.Dir, o); err != nil {
 		return err

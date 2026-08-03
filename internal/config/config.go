@@ -428,7 +428,7 @@ func loadDotEnv(path string) map[string]string {
 	if err != nil {
 		return out
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

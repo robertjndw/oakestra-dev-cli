@@ -97,15 +97,6 @@ func ref(t components.Target) compose.Ref {
 	return compose.Ref{Stack: t.Stack, Container: t.Container}
 }
 
-// refs narrows several at once.
-func refs(targets []components.Target) []compose.Ref {
-	out := make([]compose.Ref, len(targets))
-	for i, t := range targets {
-		out[i] = ref(t)
-	}
-	return out
-}
-
 // upOrder is the order stacks must start in. Root and cluster both declare
 // the shared "oakestra" network (non-external) so whichever comes up first
 // creates it; worker.yml declares it `external: true` and fails outright if

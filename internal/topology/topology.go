@@ -126,7 +126,7 @@ func writeLibsOverlays(cfg *config.Config) error {
 	for _, stack := range []string{components.StackRoot, components.StackCluster} {
 		path := filepath.Join(dir, "libs-"+stack+".yml")
 		if cfg.LibsRepo == "" {
-			os.Remove(path)
+			_ = os.Remove(path)
 			continue
 		}
 		svcs := map[string]any{}
@@ -144,7 +144,7 @@ func writeLibsOverlays(cfg *config.Config) error {
 			}
 		}
 		if len(svcs) == 0 {
-			os.Remove(path)
+			_ = os.Remove(path)
 			continue
 		}
 		out := map[string]any{"services": svcs}
