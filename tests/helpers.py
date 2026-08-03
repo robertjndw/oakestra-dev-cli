@@ -58,6 +58,15 @@ def wait_until(check, timeout, interval=3, desc="condition"):
 class ApiClient:
     """Thin wrapper around requests.Session with base URL and JWT handling.
 
+    Construct with a service's base URL, log in once, then call get/post/delete
+    with paths relative to that base - the Authorization header and 401
+    re-login are handled for you:
+
+        client = ApiClient("http://localhost:10000")
+        client.login("Admin", "Admin")
+        resp = client.get("/api/clusters/active")
+        resp.raise_for_status()
+
     Re-logs in automatically when a request comes back 401 - the access
     token expires after ~15 minutes, which a slow E2E run can exceed.
     """
@@ -68,6 +77,13 @@ class ApiClient:
         self._credentials = None
 
     def login(self, username, password):
+        """Authenticate and store the bearer token for later requests.
+
+        Also remembers the credentials, so a 401 on any later request
+        triggers a silent re-login rather than failing the caller outright.
+        Returns the raw token; callers normally don't need it since it's
+        already applied to this client's session.
+        """
         resp = self.session.post(
             f"{self.base_url}/api/auth/login",
             json={"username": username, "password": password},
@@ -90,12 +106,15 @@ class ApiClient:
         return resp
 
     def get(self, path, **kwargs):
+        """GET path (relative to base_url). kwargs pass through to requests, e.g. params=..."""
         return self._request("GET", path, **kwargs)
 
     def post(self, path, **kwargs):
+        """POST to path (relative to base_url). kwargs pass through to requests, e.g. json=..."""
         return self._request("POST", path, **kwargs)
 
     def delete(self, path, **kwargs):
+        """DELETE path (relative to base_url). kwargs pass through to requests."""
         return self._request("DELETE", path, **kwargs)
 
 

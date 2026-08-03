@@ -30,8 +30,8 @@ def config():
 def root_api(config):
     """Logged-in client for the system_manager API.
 
-    Retries the login while the stack is still booting so 'make e2e' can run
-    the suite immediately after 'make up'.
+    Retries the login while the stack is still booting so 'oak-dev test' can
+    run immediately after 'oak-dev up', without waiting for it separately.
     """
     client = ApiClient(config["root_api"])
 

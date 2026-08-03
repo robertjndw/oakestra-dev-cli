@@ -120,7 +120,7 @@ func mergeFragment(merged map[string]any, path string) {
 
 // writeLibsOverlays generates .generated/libs-<stack>.yml when libs_repo is
 // set: mounts the shared oakestra_utils_library over site-packages in every
-// currently-live Python container in that stack (Phase 1d).
+// currently-live Python container in that stack.
 func writeLibsOverlays(cfg *config.Config) error {
 	dir := filepath.Join(cfg.RepoRoot, genDir)
 	for _, stack := range []string{components.StackRoot, components.StackCluster} {
