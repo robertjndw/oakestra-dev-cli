@@ -15,7 +15,13 @@ is always authoritative if this drifts.
 
 ## Start and stop
 
-- `oak-dev up [--workers N]` - build and start the stacks in scope.
+- `oak-dev up [--workers N]` - build and start the stacks in scope. `--workers`
+  overrides the `workers` setting for this run. Above 1 it scales the single
+  `worker` compose service rather than declaring new ones, which is worth
+  knowing because `logs`/`shell` targets are compose *service* names: `oak-dev
+  logs worker` follows every replica, but `oak-dev shell worker` only ever
+  lands in the first. To reach a specific replica, find its container with
+  `docker ps` and `docker exec` into it directly.
 - `oak-dev down [--volumes] [--yes]` - stop, in reverse start order.
   `--volumes` also deletes MongoDB/Redis/containerd volumes (prompts unless
   `--yes`). A plain `down` (no `--stack`) also clears the sticky scope.
@@ -74,9 +80,26 @@ is always authoritative if this drifts.
   proto stubs and points the `oak` CLI at this stack; both write outside this
   repo and announce every file/setting touched.
 - `oak-dev config [get <key> | set <key> <value>]` - no arguments prints every
-  resolved setting; `get`/`set` target one. `.env`/the process environment
-  outrank `oak-dev.yaml` for `oakestra_repo`, `cluster.name`,
-  `cluster.location`, `versions.netmanager`, `versions.lib_branch`.
+  resolved setting; `get`/`set` target one. `set` preserves the comments and
+  formatting in `oak-dev.yaml`, and warns when an env override means the write
+  won't take effect. Every accepted key:
+
+  | Key | Env override | Meaning |
+  |---|---|---|
+  | `oakestra_repo` | `OAKESTRA_REPO` | the `oakestra` checkout to build from |
+  | `libs_repo` | `OAKESTRA_LIBS_REPO` | optional `oakestra_utils_library` checkout to mount over site-packages in live Python containers |
+  | `cluster.name` | `CLUSTER_NAME` | cluster registered with the root orchestrator |
+  | `cluster.location` | `CLUSTER_LOCATION` | `"lat,lon,radius"` |
+  | `workers` | - | number of dockerized workers |
+  | `stack` | `OAK_DEV_STACK` | default scope; a sticky scope from `up --stack` still outranks it |
+  | `profiles.dashboard` | - | add the upstream dashboard back |
+  | `profiles.observability` | - | add the upstream observability stack back |
+  | `profiles.addons` | - | add the upstream addons back |
+  | `versions.netmanager` | `NETMANAGER_VERSION` | `auto` = `alpha-<version.txt>`, or an explicit tag |
+  | `versions.lib_branch` | `LIB_BRANCH` | branch the shared Python libraries are installed from at image build time |
+
+  `oakestra_net_repo` and `live:` are not settable here: `live:` is managed by
+  `reload`/`debug`, and both are still editable by hand in `oak-dev.yaml`.
 - `oak-dev completion [bash|zsh|fish|powershell]` / `completion install
   [shell]` - shell completion, plus writing the script straight to where the
   shell loads it from.
@@ -97,12 +120,23 @@ is always authoritative if this drifts.
 
 ## Debugger ports (`oak-dev vscode install`'s launch.json)
 
-Delve (Go): scheduler on the root stack listens on `:2345`, the cluster
-scheduler on `:2346`, NodeEngine on `:2347`, NetManager on `:2348`. debugpy
-(Python): `cluster_manager` on `:5681`; other Python components follow the same
-pattern - run `oak-dev vscode install` and check the generated launch.json for
-the exact port before attaching, or read `DebugPort` straight off the
-registry in `internal/components/components.go`.
+| Component | Port | Debugger |
+|---|---|---|
+| `scheduler` (root stack) | 2345 | Delve |
+| `scheduler` (cluster stack) | 2346 | Delve |
+| `nodeengine` | 2347 | Delve |
+| `netmanager` | 2348 | Delve |
+| `system_manager` | 5678 | debugpy |
+| `jwt_generator` | 5679 | debugpy |
+| `root_resource_abstractor` | 5680 | debugpy |
+| `cluster_manager` | 5681 | debugpy |
+| `cluster_resource_abstractor` | 5682 | debugpy |
+| `root_service_manager` | 5683 | debugpy |
+| `cluster_service_manager` | 5684 | debugpy |
+
+`oak-dev debug <component>` prints the port it used, and `DebugPort` in
+`internal/components/components.go` is the registry both this table and the
+generated launch.json come from - check there if they ever disagree.
 
 Any number of components can be debugged at once, including NodeEngine and
 NetManager together (separate processes in the shared worker container -

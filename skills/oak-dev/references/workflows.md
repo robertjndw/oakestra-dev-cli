@@ -37,6 +37,54 @@ themselves and recreate its container once to attach the bind mount;
 `--no-live` turns that automatic promotion back into an error, for when a
 missing `live:` entry should be surprising.
 
+## Verifying a change actually reached the running system
+
+`oak-dev test --smoke` proves the stack is alive; it does not deploy anything.
+To prove a change survives the whole chain (REST API -> root scheduler ->
+cluster scheduler -> MQTT -> NodeEngine -> containerd), either run the
+deployment tests or deploy by hand:
+
+```bash
+oak-dev test -- tests/test_03_deployment.py   # the scripted version
+oak application create -f fixtures/nginx.json # the manual one (JSON, not YAML)
+oak-dev status                                # clusters, nodes, instances
+oak-dev shell worker -- ctr -n oakestra containers ls   # what actually ran
+oak-dev logs mqtt --no-follow --tail 200      # the control-plane messages
+```
+
+`oak-dev doctor --fix` points the `oak` CLI at this stack, so `oak` commands
+work without further configuration. The MQTT tap is the only way to watch
+cluster<->worker messages like `nodes/<id>/control/deploy` - they never appear
+in any container's stdout.
+
+## Working on the shared Python libraries
+
+Edits to `oakestra_utils_library` are invisible by default: the libraries are
+pip-installed from the `versions.lib_branch` GitHub branch when the image is
+built, so no reload can reach them.
+
+```bash
+oak-dev config set libs_repo ../oakestra_utils_library
+oak-dev up                        # recreates live Python containers with the mount
+```
+
+The mount is generated only for the Python components already in `live:`
+(`oak-dev status` shows the set), so add the ones you need first with
+`oak-dev reload <component>`.
+
+## Turning the upstream extras back on
+
+This repo ships lean compose overrides: no dashboard, observability or addons.
+
+```bash
+oak-dev config set profiles.dashboard true
+oak-dev up
+```
+
+`profiles.observability` and `profiles.addons` work the same way. Leave them
+off unless the task needs them - each adds containers, image pulls and startup
+time to every `up`.
+
 ## Partial stacks
 
 `--stack worker` brings up cluster + worker only (the worker needs a cluster

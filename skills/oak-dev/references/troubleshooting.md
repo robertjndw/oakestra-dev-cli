@@ -25,6 +25,36 @@ until they age out.
   - not a new regression. Confirm the override files still exist rather than
     debugging the symptom from scratch.
 
+## An edit reloads cleanly but changes nothing
+
+Work through these in order - each is a case where the source you edited was
+never the source the container is running:
+
+1. **Is the component in `live:`?** `oak-dev status` shows the set. A
+   component running its baked image ignores your checkout entirely;
+   `oak-dev reload <component>` adds it and recreates the container once.
+2. **Is it the right checkout?** `root_service_manager`,
+   `cluster_service_manager` and `netmanager` come from `oakestra_net_repo`,
+   everything else from `oakestra_repo`. `oak-dev config` prints both resolved
+   paths, and `.env` outranks `oak-dev.yaml` for `OAKESTRA_REPO`.
+3. **Is it in the shared library?** `oakestra_utils_library` is
+   pip-installed from the `versions.lib_branch` GitHub branch at image build
+   time. Set `libs_repo` and re-run `oak-dev up` to mount a local checkout
+   over site-packages (live Python components only); otherwise the change
+   needs pushing and an `--image` rebuild.
+4. **Does the change need a rebuild?** `requirements.txt`, a `Dockerfile` or
+   `go.mod` are invisible to any mount - `oak-dev reload <component> --image`.
+
+## `oak-dev test` refuses to run
+
+The E2E suite needs all three stacks, so it fails fast under a narrowed scope
+rather than timing out later on a connection it can't make. The usual cause is
+a sticky scope left behind by an earlier `oak-dev up --stack worker` - `oak-dev
+status` prints the active scope and where it came from. Clear it with a plain
+`oak-dev down`, or override for one run with `oak-dev test --stack full`.
+`--smoke` is no different; only `oak-dev test <go-component>` is exempt,
+because it touches no containers.
+
 ## `reload rsm` / `reload csm --image` errors on purpose
 
 Those two run pinned upstream GHCR images with no local `build:` section, so
