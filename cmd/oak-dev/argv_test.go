@@ -350,7 +350,7 @@ func TestArgvResetNeverTouchesTheWorker(t *testing.T) {
 func TestArgvDebugPython(t *testing.T) {
 	cfg, tl, rec := argvEnv(t, map[string]bool{})
 
-	if err := runDebug(cfg, tl, "cluster_manager", false); err != nil {
+	if err := runDebug(cfg, tl, "cluster_manager", false, false); err != nil {
 		t.Fatalf("runDebug: %v", err)
 	}
 
@@ -372,7 +372,7 @@ func TestArgvDebugGoBuildsWithDebugFlags(t *testing.T) {
 
 	// EnsureDelve's copy step fails (nothing to copy); the invocations before
 	// it are the subject.
-	_ = runDebug(cfg, tl, "scheduler", false)
+	_ = runDebug(cfg, tl, "scheduler", false, false)
 
 	got := commands(t, cfg, rec)
 	if !slices.Contains(got, "go build -o build/linux_arm64/scheduler -gcflags=all=-N -l ./cmd") {

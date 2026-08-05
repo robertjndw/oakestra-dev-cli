@@ -81,6 +81,30 @@ No Go toolchain needed? The same skill installs via
 See `oak-dev skill --help` for `--global`/`--target`, and
 [skills/oak-dev/SKILL.md](skills/oak-dev/SKILL.md) for what it covers.
 
+### Running oak-dev from VS Code
+
+`oak-dev vscode install` generates `.vscode/launch.json` and
+`.vscode/tasks.json` from the component registry and this checkout's
+resolved config, so every debug port and source path stays correct without
+hand-editing a file that could drift. Run it from wherever you actually edit
+source - it needs `-C` pointed at this checkout if that isn't also the
+current directory:
+
+```bash
+oak-dev vscode install                                # this checkout
+cd ../oakestra && oak-dev vscode install -C ../oakestra-dev-cli   # or a sibling repo
+oak-dev vscode install --all                           # this checkout + both source repos
+oak-dev vscode status                                  # installed, and up to date?
+```
+
+Existing files are merged, not replaced: only entries whose name/label starts
+with `oak-dev: ` are regenerated - anything you've added by hand stays. Each
+generated launch configuration's `preLaunchTask` runs
+`oak-dev debug <component> --wait`, so pressing F5 both attaches the debugger
+and recreates the container with it turned on - no terminal step first. The
+Run Task picker (`oak-dev: reload`, `oak-dev: up`, `oak-dev: test`, ...)
+covers the rest of the CLI. See `oak-dev vscode --help`.
+
 ## Configuration reference
 
 Two files control settings, and `oak-dev config` reads/writes the first
@@ -127,7 +151,7 @@ every command.
 | `OAK_READY_TIMEOUT` | `180` | Seconds to wait for boot/registration |
 | `OAK_DEPLOY_TIMEOUT` | `300` | Seconds to wait for instances to reach RUNNING |
 
-## The thirteen commands
+## The fourteen commands
 
 ```
 Start and stop            Work on the code          Look inside
@@ -139,6 +163,7 @@ Start and stop            Work on the code          Look inside
                                                       doctor
                                                       config
                                                       skill
+                                                      vscode
 ```
 
 `oak-dev --help` groups them exactly like this, and every command has a
@@ -183,7 +208,7 @@ against it.
 ## Command reference
 
 Every command below also accepts the global `--stack full|root|cluster|worker`
-flag described under **Scope** in [The twelve commands](#the-twelve-commands)
+flag described under **Scope** in [The fourteen commands](#the-fourteen-commands)
 - it's omitted from the signatures here since it applies uniformly, not just
 to the commands where scoping is the main point.
 
@@ -194,7 +219,7 @@ to the commands where scoping is the main point.
 | `oak-dev reset [--yes]` | The "state is weird" fix (~15s, no image work): drops every non-system database in root and cluster, flushes both redis instances, and restarts services so in-memory caches clear too. Doesn't re-register the worker. |
 | `oak-dev dev [component...] [--no-up] [--test smoke]` | The one command to start working: brings the stack up, merges logs from every stack in scope, and cross-compiles/restarts live Go components on save. Python services live-reload via `gunicorn --reload` already. `--test smoke` reruns the smoke suite after each rebuild. |
 | `oak-dev reload [component...] [--image] [--no-live]` | Makes an edit take effect - the mechanism depends on the component's language (see below). `--image` forces a full rebuild + recreate. Adds the component to `live:` automatically if it wasn't there; `--no-live` turns that into an error instead. |
-| `oak-dev debug <component> [--no-live]` | Recreates the container with a debugger attached (Delve for Go, debugpy for Python) and prints the `localhost` port to attach to (matches `.vscode/launch.json`). |
+| `oak-dev debug <component> [--no-live] [--wait]` | Recreates the container with a debugger attached (Delve for Go, debugpy for Python) and prints the `localhost` port to attach to (matches `oak-dev vscode install`'s launch.json). `--wait` blocks until that port actually accepts connections - what a generated launch config's `preLaunchTask` uses so F5 doesn't race the debugger starting up. |
 | `oak-dev test [component] [--smoke] [--no-up] [-- args...]` | With no argument, runs the full pytest E2E suite (starts the stack unless `--no-up`). `--smoke` runs health + registration only. With a component, runs its own `go test ./...` on the host - no Docker. Anything after `--` passes straight through. |
 | `oak-dev logs [target...] [--tail N] [--no-follow]` | Streams logs for a stack, component, container, or endpoint (see below). No target merges every stack in scope into one color-tagged stream. |
 | `oak-dev shell <target> [-- cmd...]` | Opens a shell (or runs a command) in a stack, component, container, or endpoint. Prefers bash, falls back to sh. |
@@ -203,6 +228,7 @@ to the commands where scoping is the main point.
 | `oak-dev config`, `oak-dev config get <key>`, `oak-dev config set <key> <value>` | Reads or writes `oak-dev.yaml` settings without opening the file. `set` edits the file in place, keeping comments, and warns if `.env` or the sticky scope outranks what it just wrote. |
 | `oak-dev completion install [shell]` | Installs shell completion (bash/zsh/fish) to the right place for your shell. `completion --help` generates a script only (also covers powershell). |
 | `oak-dev skill install\|status\|uninstall [--global] [--target auto\|claude\|agents\|all]` | Installs the `skills/oak-dev` Agent Skill into `.claude/skills` and/or `.agents/skills` (see [Teaching an AI coding agent to drive oak-dev](#teaching-an-ai-coding-agent-to-drive-oak-dev)). Works from any directory - never needs `-C` or a checkout. |
+| `oak-dev vscode install\|status\|uninstall [dir...] [--all] [--dry-run] [--yes]` | Generates `.vscode/launch.json` and `.vscode/tasks.json` from the component registry into `dir` (default: the current directory), merging with anything already there (see [Running oak-dev from VS Code](#running-oak-dev-from-vs-code)). `--all` targets this checkout plus both source repos at once. `uninstall` prompts before discarding a hand-written comment it can't preserve, unless `--yes`. |
 
 **Reload mechanism by component:**
 
@@ -266,7 +292,7 @@ reason.
 ├── compose/override-*.yml      # macOS-specific fixes + live/debug overlays
 ├── worker/                     # DinD worker image: NodeEngine + NetManager + entrypoint
 ├── fixtures/                   # ready-to-deploy SLA JSON for `oak application create -f`
-├── .vscode/launch.json         # debugger attach configs per component
+├── .vscode/                    # generated by `oak-dev vscode install` - gitignored, not checked in
 ├── tests/                      # pytest E2E suite
 ├── oak-dev.yaml.example        # config template (copy to oak-dev.yaml)
 ├── .env.example                # env config template (copy to .env)

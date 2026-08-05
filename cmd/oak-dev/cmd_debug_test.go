@@ -1,10 +1,15 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"oak-dev/internal/components"
 	"oak-dev/internal/config"
@@ -113,5 +118,98 @@ func TestDebugOverlaysNoneAttached(t *testing.T) {
 	// The container being acted on is always recreated, overlay or not.
 	if !slices.Equal(services, []string{"system_manager"}) {
 		t.Errorf("services = %v, want [system_manager]", services)
+	}
+}
+
+// TestWaitForPortReturnsOnceListening simulates a real debugger: it accepts
+// the connection and, like dlv/debugpy waiting for their client to speak
+// first, sends nothing and keeps it open rather than closing it.
+func TestWaitForPortReturnsOnceListening(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+		}
+	}()
+	defer func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}()
+
+	port, err := strconv.Atoi(strings.Split(ln.Addr().String(), ":")[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForPort(port, 5*time.Second); err != nil {
+		t.Fatalf("waitForPort on a listening port: %v", err)
+	}
+}
+
+// TestWaitForPortIgnoresForwarderThatAcceptsThenDrops covers the race
+// portBacked exists to close: Docker/OrbStack's host-side port forwarder
+// accepts the TCP handshake as soon as the container's port mapping exists,
+// then drops the connection once it discovers nothing is listening inside
+// yet - well before the real debugger has started. A bare dial-success check
+// would treat that as ready; waitForPort must not.
+func TestWaitForPortIgnoresForwarderThatAcceptsThenDrops(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	port, err := strconv.Atoi(strings.Split(ln.Addr().String(), ":")[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = waitForPort(port, 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitForPort on an accept-then-drop forwarder = nil, want a timeout error - that's not a real listener")
+	}
+}
+
+func TestWaitForPortTimesOutWhenNothingListens(t *testing.T) {
+	// Reserve a port, then close it before waiting - almost certainly nothing
+	// else grabs it in the meantime, and the short timeout keeps the test fast.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(strings.Split(ln.Addr().String(), ":")[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err = waitForPort(port, 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitForPort on a closed port = nil, want a timeout error")
 	}
 }

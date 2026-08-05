@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -18,8 +21,14 @@ import (
 	"oak-dev/internal/testsuite"
 )
 
+// waitTimeout bounds --wait: long enough for a Python overlay's `pip install
+// debugpy` (the slowest case - a cold pip cache can take several seconds) to
+// finish and start listening, short enough that a genuinely broken container
+// fails a preLaunchTask rather than hanging VS Code's Run and Debug forever.
+const waitTimeout = 30 * time.Second
+
 func newDebugCmd() *cobra.Command {
-	var noLive bool
+	var noLive, wait bool
 
 	cmd := &cobra.Command{
 		Use:     "debug <component>",
@@ -27,7 +36,8 @@ func newDebugCmd() *cobra.Command {
 		Short:   "Attach a debugger to a component",
 		Long: `Recreates the component's container with a debugger in front of it - Delve for
 Go, debugpy for Python - and prints the localhost port to attach to. Those
-ports match .vscode/launch.json, so "Attach: <component>" just works.
+ports match .vscode/launch.json (see "oak-dev vscode install"), so "oak-dev:
+attach <component>" just works.
 
 The component is mounted from your working tree first if it isn't already, so
 the debugger's source paths line up 1:1 with the files you're editing.
@@ -45,11 +55,58 @@ root and cluster stacks), narrow it with --stack.`,
 			if err != nil {
 				return err
 			}
-			return runDebug(cfg, tl, args[0], noLive)
+			return runDebug(cfg, tl, args[0], noLive, wait)
 		},
 	}
 	cmd.Flags().BoolVar(&noLive, "no-live", false, "fail instead of adding the component to oak-dev.yaml's live: list")
+	cmd.Flags().BoolVar(&wait, "wait", false,
+		"block until the debug port actually accepts connections, instead of returning as soon as the container is recreated - for use as a VS Code preLaunchTask, where attaching immediately would race the debugger starting up")
 	return cmd
+}
+
+// waitForPort blocks until host port is genuinely backed by a listener
+// inside the container, or timeout elapses. Used by --wait: the debug
+// overlays install/start their debugger from `command:`/the container
+// entrypoint, so the port isn't listening the instant ForceRecreate returns -
+// a VS Code preLaunchTask that races that would fail to attach intermittently
+// rather than deterministically. timeout is a parameter (waitTimeout at the
+// one real call site) so tests can bound the failure case without a 30s
+// sleep.
+func waitForPort(port int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	for {
+		if portBacked(addr) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for localhost:%d to accept connections", timeout, port)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// portBacked reports whether addr is backed by an actual listener, not just
+// Docker/OrbStack's host-side port forwarder. The forwarder's host socket
+// exists (and accepts the TCP handshake) as soon as the container's port
+// mapping is created - before dlv or debugpy has started inside it - and only
+// discovers there's nothing to relay to once it tries to open the backend
+// connection, closing the client side a moment later. A bare dial-success
+// check races that discovery and reports ready too early; waiting a beat on
+// a read distinguishes a forwarder that's about to give up (fails fast, well
+// under the deadline below) from a connection that's genuinely still open
+// (times out, since neither debugger sends anything before its client
+// speaks first).
+func portBacked(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_, err = conn.Read(make([]byte, 1))
+	return err == nil || errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 // debugOverlays returns the override-debug-*.yml files for every component
@@ -137,7 +194,7 @@ func pickTarget(cfg *config.Config, c components.Component) (components.Target, 
 // and prints the port to attach to. Split out of RunE so the sequence - guard
 // the worker, make it live, build with debug flags, record the attachment,
 // reapply every overlay on that container - is reachable from a test.
-func runDebug(cfg *config.Config, tl *tools, name string, noLive bool) error {
+func runDebug(cfg *config.Config, tl *tools, name string, noLive, wait bool) error {
 
 	c, err := components.Resolve(name)
 	if err != nil {
@@ -214,7 +271,13 @@ func runDebug(cfg *config.Config, tl *tools, name string, noLive bool) error {
 		_ = debugstate.Remove(cfg.RepoRoot, c.Name, t.Stack)
 		return err
 	}
-	fmt.Printf("oak-dev: attach from VS Code (.vscode/launch.json) or any DAP client on localhost:%d.\n", t.DebugPort)
+	if wait {
+		fmt.Printf("oak-dev: waiting for localhost:%d to accept connections...\n", t.DebugPort)
+		if err := waitForPort(t.DebugPort, waitTimeout); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("oak-dev: attach from VS Code (`oak-dev vscode install`'s launch.json) or any DAP client on localhost:%d.\n", t.DebugPort)
 	if len(t.InPlaceRestart) > 0 {
 		// reload deliberately never recreates the worker, so it can't
 		// undo this one - see the comment on reconcile().

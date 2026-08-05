@@ -23,7 +23,7 @@ oak-dev dev                          # start everything, watch for edits, stream
 oak-dev up / oak-dev down            # start/stop (--stack worker for a subset)
 oak-dev test                         # full suite (starts the stack if needed)
 oak-dev test --smoke                 # health + registration only
-oak-dev --help                       # all twelve commands, grouped
+oak-dev --help                       # all fourteen commands, grouped
 oak-dev config                       # print resolved settings; `config set <key> <value>` edits oak-dev.yaml
 
 # Single test file / single test - pass through with --
@@ -38,8 +38,9 @@ oak-dev reload ne                    # same for the worker; restarts nodeengined
 oak-dev reload cm                    # Python: already live under gunicorn --reload, a no-op
 oak-dev reload sm --image            # full image rebuild (~30s), for requirements.txt/Dockerfile
 oak-dev test sched                   # go test ./..., no containers (~2s)
-oak-dev debug cm                     # attach a debugger, see .vscode/launch.json
+oak-dev debug cm                     # attach a debugger, or F5 in VS Code - see oak-dev vscode install
 oak-dev dev sched                    # watch just the scheduler
+oak-dev vscode install               # generate .vscode/{launch,tasks}.json from the component registry
 
 # reload/debug add the component to oak-dev.yaml's live: themselves and
 # recreate its container; --no-live turns that back into an error.

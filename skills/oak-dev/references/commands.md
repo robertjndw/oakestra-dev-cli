@@ -36,11 +36,15 @@ is always authoritative if this drifts.
   container once) unless `--no-live`. `--image` rebuilds the image instead of
   swapping the binary/relying on the bind mount - use it for
   `requirements.txt`/`Dockerfile`/`go.mod` changes.
-- `oak-dev debug <component> [--no-live] [--stack ...]` - recreate the
-  component with a debugger attached: Delve for Go, debugpy for Python. Prints
-  the localhost port, which matches `.vscode/launch.json`'s "Attach: <component>"
-  configs. A component running in more than one stack (the scheduler, in both
-  root and cluster) needs `--stack` to disambiguate.
+- `oak-dev debug <component> [--no-live] [--stack ...] [--wait]` - recreate
+  the component with a debugger attached: Delve for Go, debugpy for Python.
+  Prints the localhost port, which matches `oak-dev vscode install`'s
+  generated launch.json ("oak-dev: attach <component>"). A component running
+  in more than one stack (the scheduler, in both root and cluster) needs
+  `--stack` to disambiguate. `--wait` blocks until the port actually accepts
+  connections instead of returning as soon as the container is recreated -
+  what a generated launch config's `preLaunchTask` uses so VS Code's F5
+  doesn't race the debugger starting up.
 - `oak-dev test [component] [-- args...] [--smoke] [--no-up]` - with no
   component, runs the pytest E2E suite (starting the stack first unless
   `--no-up`). With a Go component, runs `go test ./...` on the host, no
@@ -80,13 +84,25 @@ is always authoritative if this drifts.
   this skill into `.claude/skills` / `.agents/skills` (project by default,
   `--global` for `~`). Report-only in `oak-dev doctor` - never installed as a
   side effect of `--fix`.
+- `oak-dev vscode install|status|uninstall [dir...] [--all] [--dry-run]
+  [--yes]` - generates `.vscode/launch.json` and `.vscode/tasks.json` from the
+  component registry into `dir` (current directory by default), merging with
+  anything already there - only entries whose name/label starts with
+  `oak-dev: ` are regenerated. `--all` targets this checkout plus
+  `$OAKESTRA_REPO` and `$OAKESTRA_NET_REPO` at once. Each generated launch
+  config's `preLaunchTask` runs `oak-dev debug <component> --wait`, so F5
+  both attaches and starts the debugger with one keystroke. `uninstall`
+  prompts before rewriting/deleting a file with a hand-written comment it
+  can't preserve, unless `--yes`.
 
-## Debugger ports (`.vscode/launch.json`)
+## Debugger ports (`oak-dev vscode install`'s launch.json)
 
 Delve (Go): scheduler on the root stack listens on `:2345`, the cluster
 scheduler on `:2346`, NodeEngine on `:2347`, NetManager on `:2348`. debugpy
 (Python): `cluster_manager` on `:5681`; other Python components follow the same
-pattern - check `.vscode/launch.json` for the exact port before attaching.
+pattern - run `oak-dev vscode install` and check the generated launch.json for
+the exact port before attaching, or read `DebugPort` straight off the
+registry in `internal/components/components.go`.
 
 Any number of components can be debugged at once, including NodeEngine and
 NetManager together (separate processes in the shared worker container -

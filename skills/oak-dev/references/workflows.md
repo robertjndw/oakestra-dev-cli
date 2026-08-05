@@ -62,14 +62,18 @@ differently than running the file as a whole.
 ## Debugging
 
 ```bash
-oak-dev debug cm                  # attach a debugger, see .vscode/launch.json
+oak-dev debug cm                  # attach a debugger from the CLI
+oak-dev vscode install            # generate .vscode/{launch,tasks}.json instead
 ```
 
 Recreates the component with Delve (Go) or debugpy (Python) in front of it.
-Returning to normal: `oak-dev reload <component>` detaches most components,
-but anything living in the worker container (nodeengine, netmanager) needs
-`oak-dev up --stack worker` instead - `reload` deliberately never recreates
-the worker (see troubleshooting.md).
+`oak-dev vscode install` generates the matching launch.json/tasks.json from
+the component registry, so F5 on "oak-dev: attach <component>" does the same
+thing without a terminal - its `preLaunchTask` runs `oak-dev debug
+<component> --wait` first. Returning to normal: `oak-dev reload <component>`
+detaches most components, but anything living in the worker container
+(nodeengine, netmanager) needs `oak-dev up --stack worker` instead - `reload`
+deliberately never recreates the worker (see troubleshooting.md).
 
 ## Debugging the running system
 

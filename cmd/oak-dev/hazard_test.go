@@ -195,7 +195,7 @@ func TestHazardDebugKeepsOverlaysSharingAContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runDebug(cfg, tl, "netmanager", false); err != nil {
+	if err := runDebug(cfg, tl, "netmanager", false, false); err != nil {
 		t.Fatalf("runDebug: %v", err)
 	}
 

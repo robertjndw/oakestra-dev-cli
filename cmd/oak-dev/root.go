@@ -97,6 +97,7 @@ unambiguous prefix (cluster_man). Configuration lives in oak-dev.yaml.`,
 		newDoctorCmd(),
 		newConfigCmd(),
 		newSkillCmd(),
+		newVSCodeCmd(),
 	)
 	wireCompletionInstall(root)
 	return root

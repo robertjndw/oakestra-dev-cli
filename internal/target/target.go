@@ -240,11 +240,19 @@ func (r *Resolver) Complete(prefix string) []string {
 }
 
 func endpointNames() string {
-	var names []string
-	for _, e := range endpoints {
-		names = append(names, e.name)
+	return strings.Join(EndpointNames(), ", ")
+}
+
+// EndpointNames returns the named endpoints' canonical spellings, in registry
+// order - every one of them resolves to exactly one container, which is what
+// lets callers like the vscode picker generator build a shell-safe target
+// list without hardcoding this table a second time.
+func EndpointNames() []string {
+	names := make([]string, len(endpoints))
+	for i, e := range endpoints {
+		names[i] = e.name
 	}
-	return strings.Join(names, ", ")
+	return names
 }
 
 // services lists the compose services declared by a stack. Asking compose
