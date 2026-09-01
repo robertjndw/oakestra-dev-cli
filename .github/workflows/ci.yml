@@ -55,7 +55,7 @@ jobs:
 
       # setup-uv has no "v9" moving major tag (its last one is v7); pin the
       # exact release instead.
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
 
       - run: uvx ruff check tests/
 
