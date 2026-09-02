@@ -47,3 +47,14 @@ profiles:
 versions:
   netmanager: auto      # "auto" = alpha-<version.txt>, or pin an explicit tag
   lib_branch: develop
+
+# Settings for the E2E suite (internal/oakapi), read by `oak-dev test`.
+# Precedence is process env > .env > oak-dev.yaml > the defaults shown here.
+# e2e:
+#   root_api: http://localhost:10000
+#   cluster_api: http://localhost:10100
+#   root_ra: http://localhost:11011
+#   username: Admin
+#   password: Admin
+#   ready_timeout: 180   # seconds
+#   deploy_timeout: 300  # seconds

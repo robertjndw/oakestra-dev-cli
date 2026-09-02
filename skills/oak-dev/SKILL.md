@@ -4,7 +4,7 @@ description: >-
   Run, debug and test a local Oakestra deployment with the `oak-dev` CLI: start
   and stop the root orchestrator, cluster orchestrator and dockerized worker,
   hot-reload a component from a local oakestra/oakestra-net checkout, attach a
-  debugger, read container or MQTT logs, deploy a test app, and run the pytest
+  debugger, read container or MQTT logs, deploy a test app, and run the Go
   E2E suite. Use this whenever the user wants to run Oakestra locally, bring
   the stack up or down, reload or debug system_manager / cluster_manager /
   scheduler / resource abstractors / NodeEngine / NetManager / service
@@ -171,6 +171,6 @@ For the full flag reference, single-test invocations, and the debugger/port
 mapping, see [references/commands.md](references/commands.md).
 
 For narrower workflows - proving a change reached the running system, partial
-stacks, single-file test runs, working on the shared Python libraries, turning
+stacks, single-test runs, working on the shared Python libraries, turning
 the dashboard/observability profiles back on - see
 [references/workflows.md](references/workflows.md).

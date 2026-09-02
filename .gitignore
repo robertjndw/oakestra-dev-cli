@@ -1,10 +1,6 @@
 .env
 oak-dev.yaml
 .generated/
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
 /build/
 /bin/
 .DS_Store

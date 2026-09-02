@@ -1,5 +1,11 @@
 version: "2"
 
+# e2e/ is entirely behind `//go:build e2e` (except doc.go and guard_test.go)
+# so the tagged files exist for the linter at all - without this, golangci-lint
+# never sees them and a lint-only issue in e2e/ would pass CI silently.
+run:
+  build-tags: [e2e]
+
 # Default linter set (errcheck, govet, ineffassign, staticcheck, unused) - see
 # AGENTS.md's "Developing oak-dev itself" section for why: go vet/gofmt/tests
 # were the only gate before this file existed, and this keeps that bar rather

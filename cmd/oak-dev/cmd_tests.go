@@ -17,23 +17,24 @@ func newTestCmd() *cobra.Command {
 		Use:     "test [component] [-- args...]",
 		GroupID: groupCode,
 		Short:   "Run the end-to-end suite, or one component's unit tests",
-		Long: `With no argument, runs the pytest end-to-end suite against the stack,
-starting it first if it isn't already running. A green run means the whole
-chain worked: REST API -> root scheduler -> cluster scheduler -> MQTT ->
-NodeEngine -> containerd, with a real workload deployed inside the worker.
+		Long: `With no argument, runs the Go end-to-end suite (` + "`go test -tags e2e ./e2e/...`" + `)
+against the stack, starting it first if it isn't already running. A green run
+means the whole chain worked: REST API -> root scheduler -> cluster scheduler
+-> MQTT -> NodeEngine -> containerd, with a real workload deployed inside the
+worker.
 
 With a component, runs that component's own ` + "`go test ./...`" + ` on the host - no
 Docker, no stack, about two seconds. Only Go components have unit tests here
 (` + components.GoNames() + `).
 
-Anything after -- goes straight to pytest or go test.`,
+Anything after -- goes straight to go test.`,
 		Example: `  oak-dev test                          # the full E2E suite
   oak-dev test --smoke                  # health + registration only
   oak-dev test sched                    # go test ./... for the scheduler
   oak-dev test sched -- -run TestBestFit
-  oak-dev test -- tests/test_03_deployment.py -k scale`,
+  oak-dev test -- -run TestDeploymentLifecycle`,
 		// Only the arguments before `--` are ours; everything after belongs to
-		// pytest or go test. cobra.MaximumNArgs would count both.
+		// go test. cobra.MaximumNArgs would count both.
 		Args: func(cmd *cobra.Command, args []string) error {
 			if n := ownArgCount(cmd, args); n > 1 {
 				return fmt.Errorf("expected at most one component, got %d: %s",

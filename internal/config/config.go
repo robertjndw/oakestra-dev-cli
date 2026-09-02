@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -33,6 +35,19 @@ type VersionsCfg struct {
 	LibBranch  string `yaml:"lib_branch"`
 }
 
+// E2ECfg is the settings the E2E suite (internal/oakapi) needs to reach a
+// running stack. Resolved with the same process env > .env > oak-dev.yaml >
+// default precedence as everything else on Config.
+type E2ECfg struct {
+	RootAPI       string
+	ClusterAPI    string
+	RootRA        string
+	Username      string
+	Password      string
+	ReadyTimeout  time.Duration
+	DeployTimeout time.Duration
+}
+
 // fileConfig is the raw shape of oak-dev.yaml.
 type fileConfig struct {
 	OakestraRepo string      `yaml:"oakestra_repo"`
@@ -44,6 +59,21 @@ type fileConfig struct {
 	Stack        string      `yaml:"stack"`
 	Profiles     ProfilesCfg `yaml:"profiles"`
 	Versions     VersionsCfg `yaml:"versions"`
+	E2E          E2EFileCfg  `yaml:"e2e"`
+}
+
+// E2EFileCfg is oak-dev.yaml's e2e: block - the yaml layer of E2ECfg's
+// precedence chain. Field names match the dotted key paths registered in
+// keys.go exactly (e2e.root_api -> RootAPI, etc.), since setScalarPath
+// writes to those same paths.
+type E2EFileCfg struct {
+	RootAPI       string `yaml:"root_api"`
+	ClusterAPI    string `yaml:"cluster_api"`
+	RootRA        string `yaml:"root_ra"`
+	Username      string `yaml:"username"`
+	Password      string `yaml:"password"`
+	ReadyTimeout  int    `yaml:"ready_timeout"`  // seconds; 0 means "unset"
+	DeployTimeout int    `yaml:"deploy_timeout"` // seconds; 0 means "unset"
 }
 
 // Config is the fully resolved, ready-to-use configuration.
@@ -65,6 +95,7 @@ type Config struct {
 	NetManagerVersion string
 	SystemManagerURL  string
 	GOARCH            string
+	E2E               E2ECfg
 }
 
 const yamlFileName = "oak-dev.yaml"
@@ -217,6 +248,7 @@ func Load(repoRoot string) (*Config, error) {
 		NetManagerVersion: netmanagerVersion,
 		SystemManagerURL:  getenv("SYSTEM_MANAGER_URL", "system_manager"),
 		GOARCH:            goarch(),
+		E2E:               resolveE2E(getenv, fc.E2E),
 	}
 	if cfg.Workers < 1 {
 		cfg.Workers = 1
@@ -420,6 +452,115 @@ func goarch() string {
 		arch = "arm64"
 	}
 	return NormalizeArch(arch)
+}
+
+// resolveE2E fills an E2ECfg from getenv and the parsed e2e: yaml block, the
+// single source of truth shared by Load (cfg.E2E, for `oak-dev config`) and
+// LoadE2E (the E2E test binary), so the two can never drift. Precedence is
+// process env > .env (both via getenv) > oak-dev.yaml (fc) > the hardcoded
+// default, which carries forward the defaults from the pytest suite these
+// settings originally came from.
+func resolveE2E(getenv func(key, fallback string) string, fc E2EFileCfg) E2ECfg {
+	readyDefault := 180
+	if fc.ReadyTimeout > 0 {
+		readyDefault = fc.ReadyTimeout
+	}
+	deployDefault := 300
+	if fc.DeployTimeout > 0 {
+		deployDefault = fc.DeployTimeout
+	}
+
+	return E2ECfg{
+		RootAPI:       getenv("OAK_ROOT_API", strOr(fc.RootAPI, "http://localhost:10000")),
+		ClusterAPI:    getenv("OAK_CLUSTER_API", strOr(fc.ClusterAPI, "http://localhost:10100")),
+		RootRA:        getenv("OAK_ROOT_RA", strOr(fc.RootRA, "http://localhost:11011")),
+		Username:      getenv("OAK_USERNAME", strOr(fc.Username, "Admin")),
+		Password:      getenv("OAK_PASSWORD", strOr(fc.Password, "Admin")),
+		ReadyTimeout:  seconds(getenv("OAK_READY_TIMEOUT", strconv.Itoa(readyDefault)), readyDefault),
+		DeployTimeout: seconds(getenv("OAK_DEPLOY_TIMEOUT", strconv.Itoa(deployDefault)), deployDefault),
+	}
+}
+
+// strOr returns v, or def if v is empty - the yaml-layer analogue of
+// getenv's fallback parameter, used because an unset yaml scalar decodes to
+// "" rather than being absent.
+func strOr(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// seconds parses raw as a whole number of seconds, falling back to
+// fallbackSeconds (never an error) on anything non-numeric - a typo'd
+// OAK_DEPLOY_TIMEOUT should degrade to the default, not crash the suite.
+func seconds(raw string, fallbackSeconds int) time.Duration {
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		n = fallbackSeconds
+	}
+	return time.Duration(n) * time.Second
+}
+
+// e2eOnlyFile is oak-dev.yaml's shape as seen by LoadE2E: only the e2e:
+// block. yaml.Unmarshal ignores keys it doesn't know about, so parsing into
+// this narrow struct still picks up e2e: while never touching live: (which
+// would need components.Resolve - see Load) or anything else - LoadE2E's
+// whole reason for existing is to avoid Load's live: validation and its
+// goarch()/`uname -m` shellout, neither of which an E2E test binary should
+// depend on to report a clean settings error.
+type e2eOnlyFile struct {
+	E2E E2EFileCfg `yaml:"e2e"`
+}
+
+// LoadE2E resolves the settings internal/oakapi needs, with oak-dev's usual
+// process env > .env > oak-dev.yaml > default precedence, from a repo root
+// found via FindRoot. A missing or malformed oak-dev.yaml is not fatal here
+// - LoadE2E has no error return for a caller to handle, and standalone
+// `go test -tags e2e ./e2e/...` should still run off env + defaults alone.
+func LoadE2E(repoRoot string) E2ECfg {
+	env := loadDotEnv(filepath.Join(repoRoot, ".env"))
+	getenv := func(key, fallback string) string {
+		if v, ok := os.LookupEnv(key); ok && v != "" {
+			return v
+		}
+		if v, ok := env[key]; ok && v != "" {
+			return v
+		}
+		return fallback
+	}
+
+	var fc e2eOnlyFile
+	if data, err := os.ReadFile(filepath.Join(repoRoot, yamlFileName)); err == nil {
+		_ = yaml.Unmarshal(data, &fc) // malformed yaml: fall back to env + defaults, not fatal
+	}
+
+	return resolveE2E(getenv, fc.E2E)
+}
+
+// worktreeMarker is the file whose presence identifies an oakestra-dev-cli
+// checkout - the same one loadConfigInto (cmd/oak-dev/root.go) checks.
+const worktreeMarker = "compose/worker.yml"
+
+// FindRoot walks up from start looking for worktreeMarker, so a test binary
+// (whose cwd is its package source directory, not the repo root) can find
+// .env without depending on oak-dev.yaml or the current working directory
+// being the repo root.
+func FindRoot(start string) (string, error) {
+	dir, err := filepath.Abs(start)
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, worktreeMarker)); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no %s found walking up from %s (not an oakestra-dev-cli checkout)", worktreeMarker, start)
+		}
+		dir = parent
+	}
 }
 
 func loadDotEnv(path string) map[string]string {
