@@ -15,23 +15,24 @@ import (
 )
 
 // deadlineSlack is subtracted from the remaining time before t.Deadline()
-// when clamping a Wait's timeout. Without it, a poll timing out a moment
-// before go test's own -timeout still loses the race against reporting
-// (marshalling the failure, running deferred cleanups) and the run ends in
-// a goroutine dump instead of a readable *testing.T failure.
+// when clamping a Wait's timeout. Without it, a poll that times out right
+// before go test's own -timeout still loses that race once you account for
+// reporting the failure and running deferred cleanups, and the run ends in
+// a goroutine dump instead of a normal test failure.
 const deadlineSlack = 5 * time.Second
 
-// settings, rootAPI and activeCluster are sync.Once-backed lazy accessors,
-// not TestMain. TestMain is eager: it would have to either block every run
-// on an active cluster - destroying TestSmokeHealth's purpose as the "is
-// anything alive at all" probe - or guess in advance what's about to run.
-// Package-level state matches pytest's session-scoped fixtures: computed
-// once, reused by every test that asks for it.
+// settings, rootAPI and activeCluster are lazy, sync.Once-backed accessors
+// rather than something set up in TestMain. TestMain runs unconditionally,
+// so it would have to either block every run on an active cluster (which
+// would defeat TestSmokeHealth's whole purpose as an "is anything alive"
+// probe) or guess ahead of time what's about to run. This mirrors pytest's
+// session-scoped fixtures instead: computed once, reused by whichever test
+// asks for it.
 //
-// Each Once's error is memoized and re-reported by every caller via
-// t.Fatalf. A one-shot t.Fatal inside the Once itself would only fail the
-// first test to ask - every later caller would see a nil error and a nil
-// value and panic somewhere far less informative.
+// Each Once's error is memoized and re-reported to every caller via
+// t.Fatalf, rather than calling t.Fatal once inside the Once itself - that
+// would only fail the first test to ask, and every later caller would get a
+// nil error and a nil value and panic somewhere much less informative.
 var (
 	settingsOnce sync.Once
 	settingsVal  oakapi.Settings
@@ -122,10 +123,9 @@ func activeCluster(t *testing.T) map[string]any {
 // waitFor is the e2e-side half of tests/helpers.py's wait_until: a thin
 // wrapper around oakapi.Poll that reports failure through *testing.T and
 // clamps w.Timeout to whatever remains of t.Deadline(). Without that clamp,
-// a stuck poll trips go test's own -timeout instead of Poll's, which prints
-// a full goroutine dump for every live goroutine - the least readable
-// failure mode this package can produce - rather than a normal test
-// failure naming what was being waited for.
+// a stuck poll trips go test's own -timeout instead of Poll's, and you get a
+// full goroutine dump instead of a normal test failure that names what it
+// was waiting for.
 func waitFor[T any](t *testing.T, w oakapi.Wait, check func() (T, error)) T {
 	t.Helper()
 	if dl, ok := t.Deadline(); ok {
@@ -144,10 +144,10 @@ func waitFor[T any](t *testing.T, w oakapi.Wait, check func() (T, error)) T {
 }
 
 // instanceDetail and jobDetail decode a service document with two fields
-// oakapi.Job deliberately leaves out because only this package's failure
-// and network checks need them: a per-instance status_detail, and the
-// fixed round-robin service IP (RR_ip). Keeping them local to e2e avoids
-// growing the shared Job type for two call sites.
+// oakapi.Job doesn't have: a per-instance status_detail, and the fixed
+// round-robin service IP (RR_ip). Only this package's failure and network
+// checks need them, so they stay local here rather than growing the shared
+// Job type for two call sites.
 type instanceDetail struct {
 	InstanceNumber int    `json:"instance_number"`
 	Status         string `json:"status"`
@@ -218,9 +218,8 @@ func deployInstance(t *testing.T, cli *oakapi.Client, serviceID oakapi.ObjectID)
 
 // waitForRunningCount waits until exactly count instances of serviceID
 // report RUNNING, matching tests/test_03_deployment.py's _wait_for_running.
-// Every poll calls job.NotFailed() first so a terminal status aborts
-// immediately instead of burning the full DeployTimeout - the fail-fast
-// contract this whole port exists to make structural.
+// Every poll calls job.NotFailed() first, so a terminal status aborts right
+// away instead of burning the full DeployTimeout.
 func waitForRunningCount(t *testing.T, cli *oakapi.Client, s oakapi.Settings, serviceID oakapi.ObjectID, count int) {
 	t.Helper()
 	waitFor(t, oakapi.Wait{
@@ -245,10 +244,10 @@ func waitForRunningCount(t *testing.T, cli *oakapi.Client, s oakapi.Settings, se
 	})
 }
 
-// undeployAllInstances best-effort deletes every instance of serviceID -
-// matches tests/helpers.py's undeploy_all_instances, used from cleanup
-// paths where a failed earlier step means there is no well-known instance
-// count left to undeploy precisely.
+// undeployAllInstances best-effort deletes every instance of serviceID.
+// Matches tests/helpers.py's undeploy_all_instances. Used from cleanup paths
+// where an earlier failure means we don't know a precise instance count to
+// undeploy.
 func undeployAllInstances(t *testing.T, cli *oakapi.Client, serviceID oakapi.ObjectID) {
 	t.Helper()
 	job, err := getService(cli, serviceID)
@@ -267,10 +266,10 @@ func undeployAllInstances(t *testing.T, cli *oakapi.Client, serviceID oakapi.Obj
 }
 
 // appDoc and serviceDoc decode the id out of application/service documents
-// returned by the register/list endpoints, which render an id either as a
-// plain string in their own ID field or as Mongo's _id (string or extended
-// JSON) - mirrors tests/helpers.py's object_id() fallback, applied once per
-// document type instead of at every call site.
+// returned by the register/list endpoints. Those endpoints render an id
+// either as a plain string in their own ID field or as Mongo's _id (string
+// or extended JSON). This mirrors tests/helpers.py's object_id() fallback,
+// applied once per document type instead of at every call site.
 type appDoc struct {
 	ApplicationID oakapi.ObjectID `json:"applicationID"`
 	Underscore    oakapi.ObjectID `json:"_id"`
@@ -309,11 +308,10 @@ type app struct {
 // created application by name in the (whole-user) response list, then GET
 // its services and map each microservice name to its id.
 //
-// A delete of the application is registered via t.Cleanup immediately after
-// a successful POST - not after the whole function succeeds - so the same
-// single path covers both a mid-setup failure (e.g. the services GET below)
-// and normal end-of-test teardown, where helpers.py needed a separate
-// try/except.
+// The t.Cleanup that deletes the application is registered right after the
+// POST succeeds, not at the end of the function. That way the same cleanup
+// path covers both a mid-setup failure (e.g. the services GET below) and
+// normal teardown, where helpers.py needed a separate try/except.
 func registerApp(t *testing.T, cli *oakapi.Client, appName string, ms ...oakapi.Microservice) app {
 	t.Helper()
 
@@ -379,9 +377,8 @@ func registerApp(t *testing.T, cli *oakapi.Client, appName string, ms ...oakapi.
 }
 
 // clusterCandidates fetches the raw cluster candidate documents from the
-// root resource abstractor - unauthenticated, matching
-// tests/test_02_registration.py's _cluster_candidates, which bypasses
-// ApiClient entirely.
+// root resource abstractor. No auth, matching tests/test_02_registration.py's
+// _cluster_candidates, which bypasses ApiClient entirely.
 func clusterCandidates(s oakapi.Settings) ([]map[string]any, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(s.RootRA + "/api/v1/resources/")

@@ -26,9 +26,9 @@ func TestParseMajorMinor(t *testing.T) {
 }
 
 func TestRunReturnsOneResultPerCheck(t *testing.T) {
-	// A deliberately bogus checkout path: every check must still return a
-	// Result rather than panic - that's the whole point of doctor being
-	// safe to run before anything else is set up.
+	// Bogus checkout path on purpose: doctor is meant to be safe to run
+	// before anything else is set up, so every check must return a Result
+	// here instead of panicking.
 	cfg := &config.Config{
 		RepoRoot:     t.TempDir(),
 		OakestraRepo: "/nonexistent/oakestra",

@@ -17,8 +17,8 @@ func TestActiveEmpty(t *testing.T) {
 func TestAddRemove(t *testing.T) {
 	root := t.TempDir()
 
-	// The whole point of the package: two components attached to the same
-	// container have to both survive, in attach order.
+	// Two components attached to the same container both have to survive,
+	// in attach order - that's the case this package exists to handle.
 	for _, name := range []string{"nodeengine", "netmanager"} {
 		if err := Add(root, name, "worker"); err != nil {
 			t.Fatalf("Add(%s): %v", name, err)

@@ -10,13 +10,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestDebugPortsMatchComposeOverrides guards the one invariant
-// `oak-dev vscode install` (internal/vscode) rests on: that Target.DebugPort
-// really is the host port compose publishes once its DebugOverride is
-// applied. Nothing enforced that before - the checked-in .vscode/launch.json
-// this replaced was hand-maintained and could drift from either side
-// silently. Without this test, a generated launch.json could point VS Code
-// at the wrong port and nobody would notice until an attach failed.
+// TestDebugPortsMatchComposeOverrides checks the one thing
+// `oak-dev vscode install` (internal/vscode) assumes: that Target.DebugPort
+// is actually the host port compose publishes once DebugOverride is applied.
+// The old hand-maintained .vscode/launch.json could silently drift from
+// either side; this catches that before a generated launch.json points VS
+// Code at the wrong port.
 func TestDebugPortsMatchComposeOverrides(t *testing.T) {
 	composeDir, err := filepath.Abs(filepath.Join("..", "..", "compose"))
 	if err != nil {

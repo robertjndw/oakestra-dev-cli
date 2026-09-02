@@ -331,9 +331,9 @@ func TestLoadE2EPrecedence(t *testing.T) {
 		t.Errorf("RootAPI = %q, want the process-env value to outrank .env", e2e.RootAPI)
 	}
 
-	// Load (cfg.E2E) must resolve identically to LoadE2E - the whole point
-	// of sharing resolveE2E - so `oak-dev config`/`oak-dev test` and a
-	// standalone `go test -tags e2e` never disagree about the same setting.
+	// Load (cfg.E2E) must resolve identically to LoadE2E, since both go
+	// through resolveE2E - otherwise `oak-dev config`/`oak-dev test` and a
+	// standalone `go test -tags e2e` could disagree about the same setting.
 	cfg := loadFrom(t, dir)
 	if cfg.E2E != e2e {
 		t.Errorf("Load().E2E = %+v, want it to match LoadE2E() = %+v", cfg.E2E, e2e)

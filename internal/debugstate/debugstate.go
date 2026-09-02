@@ -1,20 +1,19 @@
 // Package debugstate records which components currently have a debugger
 // attached, and in which stack, in .generated/debug.
 //
-// It exists because a debug overlay is not part of the rendered topology:
-// topology.Render only knows about override-live-*.yml, so `oak-dev debug`
-// appends its own override-debug-*.yml on top and force-recreates the
-// container. With no memory of what was already attached, debugging a second
-// component that shares a container with a first one (nodeengine and
-// netmanager both live in `worker`) recreated that container from a chain
-// missing the first overlay, silently detaching it. Remembering the active set
-// lets every overlay for a container be reapplied together.
+// A debug overlay isn't part of the rendered topology - topology.Render only
+// knows about override-live-*.yml - so `oak-dev debug` appends its own
+// override-debug-*.yml on top and force-recreates the container. Without
+// remembering what was already attached, debugging a second component that
+// shares a container with a first (nodeengine and netmanager both live in
+// `worker`) would recreate that container from a chain missing the first
+// overlay and silently detach it. This package's job is to remember the
+// active set so every overlay for a container gets reapplied together.
 //
-// Entries carry the stack because the commands that undo an attachment
-// (`up`, `down`, `reload`) work one stack at a time: `up --stack root` doesn't
-// touch the worker, so it must not make oak-dev forget the debugger attached
-// there - the next `debug netmanager` would then omit nodeengine's overlay and
-// detach it, which is the very bug this package exists to prevent.
+// Entries carry the stack because `up`/`down`/`reload` work one stack at a
+// time. `up --stack root` doesn't touch the worker, so it must not forget the
+// debugger attached there - otherwise the next `debug netmanager` would omit
+// nodeengine's overlay and detach it.
 package debugstate
 
 import (

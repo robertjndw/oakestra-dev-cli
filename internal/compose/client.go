@@ -30,9 +30,9 @@ type LogOpts struct {
 // live behind here.
 //
 // Refs may span stacks: the scheduler runs in both the root and cluster
-// projects, and one Restart of it is two compose invocations. Implementations
-// group by stack and emit one command per stack, which is also what makes
-// reset's single multi-container restart expressible.
+// projects, so one Restart of it is really two compose invocations.
+// Implementations group by stack and emit one command per stack; that's also
+// how reset does its single multi-container restart.
 type Compose interface {
 	// Recreate brings containers up against the declared configuration.
 	// Compose only recreates when the effective config actually differs, so
@@ -75,9 +75,9 @@ type Compose interface {
 }
 
 // chains binds a rendered topology to a Client. Resolving a Ref to its -f
-// chain happens here rather than in each caller, which is what turns twelve
-// `files[t.Stack]` lookups and two spellings of the same nil check into one
-// error in one place.
+// chain happens here instead of in each caller, so the twelve
+// `files[t.Stack]` lookups (and their two different spellings of the same nil
+// check) collapse into one error in one place.
 func (c *Client) chain(stack string) ([]string, error) {
 	base, ok := c.topo[stack]
 	if !ok {

@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-// TestClientRelogsInOn401AndReplaysTheBody is the single most important test
-// in this package: it catches the Go-specific body-replay bug the plan calls
-// out. A naive retry that reuses the first request's *bytes.Reader resends
-// an empty body on the second attempt - this proves the retry sends an
-// identical body, not an empty one, and that it does so under the refreshed
-// token.
+// TestClientRelogsInOn401AndReplaysTheBody guards against the body-replay
+// bug described in attempt's doc comment: a naive retry that reuses the
+// first request's *bytes.Reader resends an empty body on the second
+// attempt. This checks the retry sends the same body again, under the
+// refreshed token.
 func TestClientRelogsInOn401AndReplaysTheBody(t *testing.T) {
 	var (
 		postBodies []string

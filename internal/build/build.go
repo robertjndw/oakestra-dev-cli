@@ -1,9 +1,8 @@
 // Package build cross-compiles Go components on the host (CGO_ENABLED=0
-// GOOS=linux) and drops the binary into build/linux_<arch>/, the directory
-// bind-mounted into the relevant container by compose/override-live-*.yml.
-// Mounting the directory rather than a single file matters: go build writes
-// a new inode each time, and a file bind-mount would keep resolving the old
-// one, silently testing stale code.
+// GOOS=linux) into build/linux_<arch>/, which compose/override-live-*.yml
+// bind-mounts into the container. The mount targets the directory, not the
+// binary: go build writes a new inode on every build, so a file mount would
+// keep resolving the old one and silently run stale code.
 package build
 
 import (
@@ -17,10 +16,10 @@ import (
 	"oak-dev/internal/proc"
 )
 
-// Builder cross-compiles components. It holds the Runner so a test can assert
-// on the `go build` invocations a code path produces - the GOARCH, the
-// -gcflags for Delve and the -ldflags stamping are all things that have to be
-// right and were previously unobservable.
+// Builder cross-compiles components. It takes a Runner instead of shelling
+// out directly, so tests can assert on the actual `go build` invocation:
+// GOARCH, the Delve -gcflags, the ldflags stamping. All of that used to be
+// untestable.
 type Builder struct {
 	cfg    *config.Config
 	runner proc.Runner
@@ -128,12 +127,12 @@ func (b *Builder) EnsureDelve() error {
 	}
 	fmt.Println("oak-dev: installing Delve for linux/" + cfg.GOARCH + " (first debug session only)...")
 
-	// `go install` refuses to cross-compile while GOBIN is set, so GOBIN can't
-	// simply point at the output directory - and developers commonly have it
-	// set. Clear it instead and let the install land in its default place;
-	// when cross-compiling that is $GOPATH/bin/$GOOS_$GOARCH/, which we copy
-	// from. GOPATH itself is left alone so this shares the normal module
-	// cache rather than downloading a second copy of everything.
+	// `go install` won't cross-compile while GOBIN is set, and plenty of
+	// developers have it set. Clear it and let the install go to its default
+	// location instead; for a cross-compile that's $GOPATH/bin/$GOOS_$GOARCH/,
+	// and we copy the binary from there below. GOPATH itself stays untouched
+	// so this still uses the normal module cache instead of fetching
+	// everything a second time.
 	gopath, err := b.goEnv("GOPATH")
 	if err != nil {
 		return err
@@ -156,8 +155,8 @@ func (b *Builder) EnsureDelve() error {
 	return copyExecutable(built, out)
 }
 
-// goEnv captures stdout only, deliberately: the result is used as a
-// filesystem path, so a toolchain warning on stderr must not end up inside it.
+// goEnv captures stdout only: the result is used as a filesystem path, and a
+// toolchain warning on stderr would otherwise end up baked into it.
 func (b *Builder) goEnv(key string) (string, error) {
 	out, err := b.runner.Capture(proc.Spec{Name: "go", Args: []string{"env", key}})
 	if err != nil {
@@ -175,7 +174,7 @@ func copyExecutable(src, dst string) error {
 }
 
 // UnitTest runs `go test ./...` for c on the host - no containers, no
-// cross-compilation, just the fastest rung on the loop ladder.
+// cross-compilation. It's the fastest feedback loop we have.
 func (b *Builder) UnitTest(c components.Component, extraArgs ...string) error {
 	if c.Kind != components.KindGo {
 		return fmt.Errorf("%s is not a Go component", c.Name)

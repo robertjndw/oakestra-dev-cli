@@ -22,9 +22,9 @@ func marshal(t *testing.T, v any) string {
 	return string(raw)
 }
 
-// A nil Go slice marshals to `null`, not `[]`. Python's `cmd or []` always
-// emitted `[]`, and Oakestra's SLA parser expects the latter - this is the
-// most likely regression in any future edit to NewMicroservice.
+// A nil Go slice marshals to `null` instead of `[]`. Python's `cmd or []`
+// always emitted `[]`, which is what Oakestra's SLA parser expects - watch
+// for this regressing if NewMicroservice changes.
 func TestMicroserviceMarshalsEveryFieldAtZero(t *testing.T) {
 	got := marshal(t, NewMicroservice("nginx"))
 	if got != nginxGolden {
@@ -54,9 +54,8 @@ func TestOneShotClientMicroservice(t *testing.T) {
 	}
 }
 
-// addresses must vanish (not marshal as null or {}) when no microservice in
-// the SLA requests one - a pointer field with omitempty is what makes that
-// true one level up too, through Microservice's own encoding.
+// addresses must vanish entirely (not marshal as null or {}) when no
+// microservice in the SLA requests one, same as at the Microservice level.
 func TestSLAMarshalsToGolden(t *testing.T) {
 	got := marshal(t, NewSLA("e2e123", NewMicroservice("nginx")))
 	if got != slaGolden {

@@ -19,9 +19,8 @@ func TestSmokeHealth(t *testing.T) {
 	s := settings(t)
 
 	t.Run("root_api_reachable", func(t *testing.T) {
-		// Bare Probe, not the authed Client: matches test_01_health.py's use
-		// of a plain requests.get with its own short timeout, bypassing
-		// ApiClient (and any login) entirely.
+		// Plain Probe here, not the authed Client - test_01_health.py does
+		// this with a bare requests.get and its own short timeout, no login.
 		waitFor(t, oakapi.Wait{
 			Timeout: s.ReadyTimeout,
 			Desc:    fmt.Sprintf("system_manager at %s", s.RootAPI),
@@ -48,8 +47,8 @@ func TestSmokeHealth(t *testing.T) {
 	})
 
 	t.Run("cluster_manager_reachable", func(t *testing.T) {
-		// Any status code counts as alive - this only proves the process is
-		// listening, not that it's authenticated or ready to schedule.
+		// Any status code counts as alive here. This only proves the process
+		// is listening, not that it's ready to schedule anything.
 		waitFor(t, oakapi.Wait{
 			Timeout: s.ReadyTimeout,
 			Desc:    fmt.Sprintf("cluster_manager at %s", s.ClusterAPI),
@@ -62,11 +61,10 @@ func TestSmokeHealth(t *testing.T) {
 	})
 
 	t.Run("admin_login_succeeds", func(t *testing.T) {
-		// tests/test_01_health.py checks this by reading the bearer token
-		// straight off the client's request headers; oakapi.Client keeps
-		// its token private, so the equivalent - and arguably stronger -
-		// check here is that an authenticated call actually succeeds rather
-		// than coming back 401.
+		// test_01_health.py checks this by reading the bearer token off the
+		// client's request headers. oakapi.Client keeps its token private, so
+		// we check the same thing more directly: an authenticated call
+		// actually succeeds instead of coming back 401.
 		cli := rootAPI(t)
 		status, body, err := cli.Get("/api/clusters/active")
 		if err != nil {

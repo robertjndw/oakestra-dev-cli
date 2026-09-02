@@ -19,13 +19,13 @@ import (
 )
 
 // tools bundles the three collaborators that start external processes.
-// Commands construct one in RunE and pass it down, rather than reading it
-// from a package-level variable: that is what lets a test call these same
-// functions with a proc.Recorder underneath and assert on what would have run.
+// Commands construct one in RunE and pass it down instead of reading it from
+// a package-level variable, so tests can call the same functions with a
+// proc.Recorder underneath and assert on what would have run.
 //
-// They are bundled because they travel together - reloadViaBinary needs the
-// builder and the compose client in the same breath - and three parameters at
-// every call would drown the arguments that carry meaning.
+// They're bundled rather than passed separately because they're usually
+// needed together (reloadViaBinary needs both the builder and the compose
+// client), and three extra parameters on every call site gets noisy.
 type tools struct {
 	compose *compose.Client
 	build   *build.Builder

@@ -142,16 +142,16 @@ func reloadComponent(cfg *config.Config, tl *tools, c components.Component, imag
 
 // reconcile brings a container back in line with the declared configuration.
 // Compose only recreates when the effective config actually differs, so this
-// is a no-op in the normal case and is what undoes `oak-dev debug` - whose
-// overrides change the entrypoint or environment, and so survive a plain
-// restart.
+// is a no-op in the normal case. Where it does something is undoing
+// `oak-dev debug`: its overrides change the entrypoint or environment, and a
+// plain restart wouldn't touch those.
 //
 // Skipped for any target with InPlaceRestart set (currently nodeengine and
-// netmanager, both living in the worker container): there, a recreate mints a
-// new hostname, which makes cluster_manager register a new node ID and
-// strands every already-scheduled instance in NODE_SCHEDULED. Coming back
-// from `debug nodeengine`/`debug netmanager` therefore needs an explicit
-// `oak-dev up`.
+// netmanager, both living in the worker container). Recreating those mints a
+// new hostname, so cluster_manager registers a new node ID and every
+// already-scheduled instance gets stranded in NODE_SCHEDULED. Coming back
+// from `debug nodeengine`/`debug netmanager` needs an explicit `oak-dev up`
+// instead.
 func reconcile(cfg *config.Config, tl *tools, targets []components.Target) error {
 	for _, t := range targets {
 		if len(t.InPlaceRestart) > 0 {
@@ -172,14 +172,14 @@ func reconcile(cfg *config.Config, tl *tools, targets []components.Target) error
 }
 
 // forgetDebug drops the debug-state entries for every component attached in
-// stack whose container is the one that was just recreated from the plain
-// topology - that recreate carries no override-debug-*.yml, so every debugger
-// in that container is gone.
+// stack whose container is the one just recreated from the plain topology.
+// That recreate carries no override-debug-*.yml, so every debugger in that
+// container is gone.
 //
-// Not only the component being reloaded: nodeengine and netmanager are both
-// the `worker` service, so recreating it detaches both. And only this stack:
-// `reload sched --stack root` leaves cluster_scheduler, and any debugger on
-// it, untouched.
+// This clears more than just the component being reloaded: nodeengine and
+// netmanager are both the `worker` service, so recreating it detaches both.
+// But it's scoped to one stack, so `reload sched --stack root` leaves
+// cluster_scheduler, and any debugger on it, untouched.
 func forgetDebug(cfg *config.Config, stack, container string) error {
 	for _, name := range debugstate.InStack(cfg.RepoRoot, stack) {
 		c, err := components.Resolve(name)

@@ -12,17 +12,16 @@ import (
 )
 
 // TestFailureReporting ports tests/test_05_failures.py: negative paths that
-// verify the platform reports what it cannot run, rather than a happy path.
-// The two subtests are independent - each registers and cleans up its own
-// single-service application - but still share the one worker node with
-// every other test in this package, which is reason enough to keep them
-// off t.Parallel like everything else here.
+// check the platform reports what it can't run, instead of a happy path.
+// The two subtests each register and clean up their own single-service
+// application, so they're independent of each other, but they still share
+// the one worker node with everything else in this package, so they stay
+// off t.Parallel too.
 //
-// Neither subtest calls job.NotFailed(). That helper exists to abort a poll
-// the instant a job hits a terminal failure status - exactly the opposite
-// of what these two want, since a failure status is the expected, asserted
-// outcome here. Calling it would turn "the platform correctly rejected
-// this" into a spurious test failure.
+// Neither subtest calls job.NotFailed(). That helper aborts a poll as soon
+// as a job hits a terminal failure status, which is the opposite of what we
+// want here - a failure status is the expected outcome, not a reason to
+// bail out early.
 func TestFailureReporting(t *testing.T) {
 	t.Run("oversized_request_rejected_by_scheduler", func(t *testing.T) {
 		s := settings(t)
@@ -30,7 +29,7 @@ func TestFailureReporting(t *testing.T) {
 		activeCluster(t)
 
 		appName := fmt.Sprintf("e2ebig%d", time.Now().Unix()%1_000_000)
-		// 10 TB - more memory than the whole cluster can possibly have.
+		// 10 TB, well more than the whole cluster can possibly have.
 		a := registerApp(t, cli, appName, oakapi.NewMicroservice("hugemem", oakapi.WithMemory(10_000_000)))
 		serviceID := a.Services["hugemem"]
 		t.Cleanup(func() { undeployAllInstances(t, cli, serviceID) })

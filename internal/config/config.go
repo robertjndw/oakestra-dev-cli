@@ -1,6 +1,6 @@
 // Package config resolves oak-dev's settings from oak-dev.yaml, .env, and
-// the process environment, in that priority order (env wins - "Keep .env
-// working as a manual override so nothing breaks mid-migration").
+// the process environment, in that priority order. Env wins, so .env still
+// works as a manual override on top of whatever oak-dev.yaml says.
 package config
 
 import (
@@ -62,10 +62,10 @@ type fileConfig struct {
 	E2E          E2EFileCfg  `yaml:"e2e"`
 }
 
-// E2EFileCfg is oak-dev.yaml's e2e: block - the yaml layer of E2ECfg's
-// precedence chain. Field names match the dotted key paths registered in
-// keys.go exactly (e2e.root_api -> RootAPI, etc.), since setScalarPath
-// writes to those same paths.
+// E2EFileCfg is oak-dev.yaml's e2e: block, the yaml layer in E2ECfg's
+// precedence chain. Field names match the dotted key paths in keys.go
+// exactly (e2e.root_api -> RootAPI, etc.) because setScalarPath writes to
+// those same paths.
 type E2EFileCfg struct {
 	RootAPI       string `yaml:"root_api"`
 	ClusterAPI    string `yaml:"cluster_api"`
@@ -196,9 +196,9 @@ func Load(repoRoot string) (*Config, error) {
 	// reload scheduler` would fall back to oak-dev.yaml's default and try to
 	// touch a root stack that was never started.
 	//
-	// stackSource records which layer won so commands can print it. The scope
-	// being invisible was itself a usability problem: the same command meant
-	// different things depending on an unprinted file written by an earlier run.
+	// stackSource records which layer won so `oak-dev status` can print it -
+	// otherwise the same command means different things depending on a file
+	// an earlier run wrote, with no way to tell from the output.
 	stack, stackSource := fc.Stack, yamlFileName
 	if stack == "" {
 		stackSource = "default"
@@ -454,12 +454,11 @@ func goarch() string {
 	return NormalizeArch(arch)
 }
 
-// resolveE2E fills an E2ECfg from getenv and the parsed e2e: yaml block, the
-// single source of truth shared by Load (cfg.E2E, for `oak-dev config`) and
-// LoadE2E (the E2E test binary), so the two can never drift. Precedence is
-// process env > .env (both via getenv) > oak-dev.yaml (fc) > the hardcoded
-// default, which carries forward the defaults from the pytest suite these
-// settings originally came from.
+// resolveE2E fills an E2ECfg from getenv and the parsed e2e: yaml block.
+// Both Load (cfg.E2E, for `oak-dev config`) and LoadE2E (the E2E test binary)
+// call this instead of each doing their own resolution, so they can't drift
+// apart. Precedence is process env > .env (both via getenv) > oak-dev.yaml
+// (fc) > the hardcoded defaults, which match what the old pytest suite used.
 func resolveE2E(getenv func(key, fallback string) string, fc E2EFileCfg) E2ECfg {
 	readyDefault := 180
 	if fc.ReadyTimeout > 0 {
@@ -503,21 +502,22 @@ func seconds(raw string, fallbackSeconds int) time.Duration {
 }
 
 // e2eOnlyFile is oak-dev.yaml's shape as seen by LoadE2E: only the e2e:
-// block. yaml.Unmarshal ignores keys it doesn't know about, so parsing into
-// this narrow struct still picks up e2e: while never touching live: (which
-// would need components.Resolve - see Load) or anything else - LoadE2E's
-// whole reason for existing is to avoid Load's live: validation and its
-// goarch()/`uname -m` shellout, neither of which an E2E test binary should
-// depend on to report a clean settings error.
+// block. yaml.Unmarshal ignores keys it doesn't recognize, so parsing into
+// this narrow struct still picks up e2e: without touching live: (that needs
+// components.Resolve, see Load) or anything else in the file.
+//
+// That's the point of LoadE2E existing separately from Load: an E2E test
+// binary reporting a settings error shouldn't first have to pass Load's
+// live: validation or shell out to `uname -m` for goarch().
 type e2eOnlyFile struct {
 	E2E E2EFileCfg `yaml:"e2e"`
 }
 
 // LoadE2E resolves the settings internal/oakapi needs, with oak-dev's usual
 // process env > .env > oak-dev.yaml > default precedence, from a repo root
-// found via FindRoot. A missing or malformed oak-dev.yaml is not fatal here
-// - LoadE2E has no error return for a caller to handle, and standalone
-// `go test -tags e2e ./e2e/...` should still run off env + defaults alone.
+// found via FindRoot. It has no error return, so a missing or malformed
+// oak-dev.yaml isn't fatal: standalone `go test -tags e2e ./e2e/...` should
+// still run off env vars and defaults alone.
 func LoadE2E(repoRoot string) E2ECfg {
 	env := loadDotEnv(filepath.Join(repoRoot, ".env"))
 	getenv := func(key, fallback string) string {

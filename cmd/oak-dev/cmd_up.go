@@ -59,7 +59,7 @@ func runUp(cfg *config.Config, tl *tools, sticky bool) (map[string][]string, err
 	if sticky {
 		// Persist the scope we're actually bringing up, so a later plain
 		// `oak-dev reload/debug/status` stays consistent with what's running
-		// instead of falling back to oak-dev.yaml's static stack: and trying
+		// instead of falling back to oak-dev.yaml's static stack and trying
 		// to touch a stack that was never started.
 		if err := config.SetLastStack(cfg.RepoRoot, cfg.Stack); err != nil {
 			return nil, err

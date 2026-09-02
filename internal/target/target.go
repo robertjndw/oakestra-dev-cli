@@ -122,12 +122,10 @@ func (r *Resolver) Resolve(spec string) ([]Target, error) {
 		return out, nil
 	}
 
-	// 2. A named endpoint. Accepts underscores as well as the canonical
-	//    dashed spelling (endpoint names use dashes, e.g. "mongo-root", but
-	//    every container/compose-service name in this repo uses underscores
-	//    - typing the more familiar "mongo_root" should still hit the mongosh
-	//    shortcut below rather than silently falling through to a plain
-	//    shell via the raw-container-name branch further down).
+	// 2. A named endpoint. Endpoint names use dashes ("mongo-root"), but
+	//    every container/compose-service name in this repo uses underscores,
+	//    so accept "mongo_root" too and route it to the mongosh shortcut
+	//    below instead of letting it fall through to a plain shell.
 	qDashed := strings.ReplaceAll(q, "_", "-")
 	for _, e := range endpoints {
 		if qDashed == e.name {

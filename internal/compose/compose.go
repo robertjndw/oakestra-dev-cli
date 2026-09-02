@@ -141,9 +141,9 @@ func Env(cfg *config.Config) []string {
 	return env
 }
 
-// Client runs docker compose. It holds the Runner rather than reaching for
-// os/exec directly, which is what lets a test substitute a proc.Recorder and
-// assert on the commands a code path would have issued.
+// Client runs docker compose. It holds a Runner instead of shelling out via
+// os/exec directly, so tests can swap in a proc.Recorder and assert on the
+// commands a given code path issues.
 //
 // Callers receive one rather than calling a package-level function, so there
 // is no process-starting global to reassign in tests.

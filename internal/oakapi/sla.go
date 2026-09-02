@@ -29,25 +29,23 @@ func (o *ObjectID) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Addresses is the optional per-microservice address request. A pointer
-// field with omitempty on the struct that embeds it is what makes it vanish
-// from the payload when a microservice doesn't request one - Oakestra
-// treats a present-but-empty addresses object differently from an absent
-// one.
+// Addresses is the optional per-microservice address request. It's a
+// pointer with omitempty on the embedding field so it disappears from the
+// payload entirely when unset - Oakestra treats a present-but-empty
+// addresses object differently from a missing one.
 type Addresses struct {
 	RRIP string `json:"rr_ip,omitempty"`
 }
 
 // Microservice is a minimal container workload for an SLA document. Field
-// order here is significant: it is also JSON encoding order, and the golden
-// tests pin it to match tests/helpers.py's build_microservice exactly - most
-// notably, Addresses must stay last, since it's the one field allowed to be
+// order matters here since it's also the JSON encoding order, and the
+// golden tests pin it to match tests/helpers.py's build_microservice
+// exactly. Addresses has to stay last: it's the only field allowed to be
 // absent.
 //
-// No field beyond Addresses carries `omitempty`. Every other field -
-// including zero values like memory 0-that-isn't-really-zero, empty
-// strings, and false - is one Oakestra's API expects to see explicitly, the
-// same as the Python dict literal it replaces.
+// Nothing but Addresses gets `omitempty`. Oakestra's API expects every
+// other field explicitly, zero values included (memory 0, empty strings,
+// false), same as the Python dict literal this replaces.
 type Microservice struct {
 	MicroserviceID ObjectID   `json:"microserviceID"`
 	Name           string     `json:"microservice_name"`
@@ -102,9 +100,9 @@ func WithOneShot() MicroserviceOption {
 // NewMicroservice builds a minimal container microservice for an SLA
 // document, matching tests/helpers.py's build_microservice defaults:
 // nginx:latest, 100 MB memory, namespace "test", no cmd/addresses, not
-// one_shot. Cmd/AddedFiles/Constraints start as non-nil empty slices - a nil
-// Go slice marshals to `null`, not `[]`, and Oakestra's SLA parser expects
-// the latter (Python's `cmd or []` always produced `[]`).
+// one_shot. Cmd/AddedFiles/Constraints start as non-nil empty slices since a
+// nil Go slice marshals to `null` instead of `[]`, which Oakestra's SLA
+// parser doesn't expect (Python's `cmd or []` always produced `[]`).
 func NewMicroservice(name string, opts ...MicroserviceOption) Microservice {
 	m := Microservice{
 		Name:           name,

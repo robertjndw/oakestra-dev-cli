@@ -415,11 +415,11 @@ func TestUninstallKeepsFileWithForeignTopLevelKeyEvenWithNoForeignEntries(t *tes
 }
 
 // TestUninstallKeepsFileWithCommentEvenWithNoForeignEntries covers a file
-// whose only foreign content is a hand-written comment: the jsonc parse
-// readJSONMap does to find oak-dev's own entries discards comments before
-// onlyKeys ever sees them, so without this check "configurations" holding
-// nothing but oak-dev's own entries would look exactly like a file safe to
-// delete outright, silently taking the user's comment with it.
+// whose only foreign content is a hand-written comment. readJSONMap's jsonc
+// parse discards comments before onlyKeys ever sees them, so without the
+// hadComments check, "configurations" holding nothing but oak-dev's own
+// entries would look safe to delete - and the delete would take the user's
+// comment with it.
 func TestUninstallKeepsFileWithCommentEvenWithNoForeignEntries(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testConfig(t, dir)

@@ -168,13 +168,15 @@ func WouldDiscardComments(targetDir string) (launch, tasks bool, err error) {
 
 // Uninstall removes oak-dev's own entries from launch.json and tasks.json,
 // deleting either file outright once nothing but the bare version/array
-// skeleton oak-dev itself would have written is left in it. Foreign entries -
-// anything without the ownership prefix - are always preserved, but comments
-// are not: the merge pipeline parses through encoding/json, which has no
-// concept of them. A file whose only foreign content was a comment is never
-// deleted outright for that reason - see uninstallLaunch/uninstallTasks -
-// but any comment attached to a surviving foreign entry is still lost, which
-// is why HadComments is reported for the caller to warn about either way.
+// skeleton oak-dev itself would have written is left in it.
+//
+// Foreign entries (anything without the ownership prefix) are always
+// preserved. Comments are not, because the merge pipeline parses through
+// encoding/json, which doesn't know comments exist. uninstallLaunch and
+// uninstallTasks avoid deleting a file outright when its only foreign
+// content was a comment, but a comment attached to a surviving foreign
+// entry is still lost - that's why HadComments is reported, so the caller
+// can warn about it either way.
 func Uninstall(targetDir string) (UninstallResult, error) {
 	targetDir, err := filepath.Abs(targetDir)
 	if err != nil {
@@ -222,15 +224,14 @@ func writeIfChanged(path string, data []byte, dryRun bool) (bool, error) {
 }
 
 // readJSONMap reads path (if it exists) and parses it as jsonc into an
-// ordered-agnostic key->raw-value map, reporting separately whether the raw
-// bytes contained comments beyond header - the exact bytes oak-dev's own
-// last write would have started the file with - that stripJSONC is about to
-// discard. header lets an untouched, previously oak-dev-written file report
-// no comments of its own: its header line is a jsonc comment too, so without
-// this a round trip through Install (or a check before Uninstall deletes it)
-// would always see "comments" that were only ever oak-dev's, not the user's.
-// A missing file parses as an empty map, not an error - that's simply
-// "nothing to merge with yet".
+// ordered-agnostic key->raw-value map. It also reports whether the raw
+// bytes contained comments beyond header, stripping those out before the
+// parse. header is oak-dev's own generated comment, so an untouched,
+// previously oak-dev-written file can report zero comments of its own -
+// without excluding it, a round trip through Install (or a check before
+// Uninstall deletes the file) would always see "comments" that were only
+// ever oak-dev's, never the user's. A missing file just parses as an empty
+// map; that's not an error, it's simply nothing to merge with yet.
 func readJSONMap(path, header string) (map[string]json.RawMessage, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -459,11 +460,10 @@ func uninstallLaunch(launchPath string) (UninstallFileResult, error) {
 	}
 	res.HadComments = hadComments
 	kept := stripOwned(readArray(m, "configurations"), "name", launchPrefix)
-	// A file that had comments is never deleted outright, even when nothing
-	// but oak-dev's own entries and the bare skeleton survive: readJSONMap's
-	// jsonc parse already discarded them from m, so a comment is exactly the
-	// kind of foreign content onlyKeys can't see - deleting here would erase
-	// it with no trace and no warning.
+	// Never delete outright if the file had comments, even when nothing but
+	// oak-dev's own entries and the bare skeleton survive: readJSONMap's
+	// jsonc parse already dropped them from m, so onlyKeys has no way to see
+	// them. Deleting here would erase them with no trace and no warning.
 	if len(kept) == 0 && !hadComments && onlyKeys(m, "version", "configurations") {
 		res.Removed = true
 		return res, removeIfExists(launchPath)
@@ -509,13 +509,13 @@ func uninstallTasks(tasksPath string) (UninstallFileResult, error) {
 	return res, os.WriteFile(tasksPath, doc, 0o644)
 }
 
-// onlyKeys reports whether m has no keys other than the ones listed. Used to
-// decide whether a file, once oak-dev's own array entries are stripped away,
-// holds nothing but the bare skeleton oak-dev itself would have written (safe
-// to delete outright) or still carries a foreign top-level key - a
-// hand-written "compounds" section in launch.json, say - that must not be
-// silently discarded along with the file just because "configurations"
-// itself happened to contain nothing but oak-dev's own entries.
+// onlyKeys reports whether m has no keys other than the ones listed. Once
+// oak-dev's own array entries are stripped out, this tells the caller
+// whether the file holds nothing but the bare skeleton oak-dev would have
+// written itself (safe to delete outright), or still carries a foreign
+// top-level key - a hand-written "compounds" section in launch.json, say -
+// that shouldn't be discarded just because "configurations" turned out
+// empty.
 func onlyKeys(m map[string]json.RawMessage, keys ...string) bool {
 	allowed := make(map[string]bool, len(keys))
 	for _, k := range keys {

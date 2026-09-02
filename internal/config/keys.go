@@ -76,11 +76,10 @@ func (c *Config) Get(key string) (string, error) {
 }
 
 // Set writes value into oak-dev.yaml at key, preserving the file's comments
-// and formatting - the same reasoning as AddLive: this file is hand-written
-// and heavily commented, so a marshal round-trip would strip it bare.
+// and formatting (same reasoning as AddLive).
 //
-// It reports envOverride, the name of a .env/process-env variable that
-// currently outranks the file per Load's precedence - the write still
+// It also reports envOverride: the name of a .env/process-env variable that
+// currently outranks the file per Load's precedence. The write still
 // succeeds, but has no effect until that override is unset.
 func (c *Config) Set(key, value string) (envOverride string, err error) {
 	sk, ok := configKeys[key]

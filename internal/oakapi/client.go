@@ -10,19 +10,17 @@ import (
 	"time"
 )
 
-// Client is a thin wrapper around http.Client with a base URL and JWT
-// handling, replacing tests/helpers.py's ApiClient. Construct with a
-// service's base URL, log in once, then call Get/Post/Delete with paths
-// relative to that base - the Authorization header and 401 re-login are
-// handled for you.
+// Client wraps http.Client with a base URL and JWT handling, replacing
+// tests/helpers.py's ApiClient. Log in once, then call Get/Post/Delete with
+// paths relative to the base URL; the Authorization header and 401 re-login
+// happen automatically.
 type Client struct {
 	baseURL string
 	http    *http.Client
 	token   string
 
-	// user/pass/haveCreds back the 401 re-login: a request that comes back
-	// unauthorized re-logs in and retries exactly once, but only once
-	// credentials actually exist to log in with.
+	// Kept so a 401 can trigger one re-login attempt. Only used if Login
+	// has actually been called.
 	user, pass string
 	haveCreds  bool
 }
@@ -36,10 +34,9 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-// Login authenticates and stores the bearer token for later requests. Also
-// remembers the credentials, so a 401 on any later request triggers a
-// silent re-login rather than failing the caller outright - the access
-// token expires after ~15 minutes, which a slow E2E run can exceed.
+// Login authenticates and stores the bearer token for later requests, and
+// remembers the credentials for automatic re-login on a 401. The token
+// expires after ~15 minutes, which a slow E2E run can outlast.
 func (c *Client) Login(user, pass string) error {
 	body, err := json.Marshal(map[string]string{"username": user, "password": pass})
 	if err != nil {
@@ -102,17 +99,15 @@ func (c *Client) do(method, path string, body []byte) (int, []byte, error) {
 	return c.attempt(method, path, body)
 }
 
-// attempt sends a single request, building a fresh *http.Request (and a
-// fresh body reader) every call.
+// attempt sends a single request, building a fresh *http.Request (and body
+// reader) each call.
 //
-// This is the Go-specific trap the Python port has to get right: a
-// *bytes.Reader is consumed by its first Do, so retrying by reusing a
-// built request would silently resend an empty body and turn an expired
-// token into a confusing 400 minutes into a run. req.GetBody does not help
-// either - net/http's transport only invokes it to replay a request across
-// a redirect, never for a caller-initiated resend. Holding the marshalled
-// []byte here and rebuilding the request from it on every attempt is what
-// makes the retry safe.
+// A *bytes.Reader is consumed by its first Do, so reusing a built request
+// on retry would silently resend an empty body - turning an expired token
+// into a confusing 400 instead of a clean re-login. req.GetBody doesn't
+// save us here either: net/http only calls it to replay a request across a
+// redirect, not for a caller-initiated resend. So we keep the raw []byte
+// and build a new request from it each time.
 func (c *Client) attempt(method, path string, body []byte) (int, []byte, error) {
 	var reader io.Reader
 	if body != nil {
@@ -144,9 +139,9 @@ func (c *Client) attempt(method, path string, body []byte) (int, []byte, error) 
 }
 
 // Probe issues an unauthenticated GET to url with the given timeout,
-// returning only the status code. Used for the bare health checks in
-// tests/test_01_health.py, which bypass ApiClient entirely and use their own
-// short timeouts (5s/10s) rather than Client's 15s.
+// returning only the status code. Mirrors the bare health checks in
+// tests/test_01_health.py, which skip ApiClient and use their own short
+// timeouts (5s/10s) instead of Client's 15s.
 func Probe(url string, timeout time.Duration) (int, error) {
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Get(url)
@@ -158,11 +153,9 @@ func Probe(url string, timeout time.Duration) (int, error) {
 }
 
 // MarshalJSON encodes v as compact JSON, like json.Marshal, but with HTML
-// escaping turned off. json.Marshal's default escapes '&', '<' and '>' to
-// & etc. - harmless to a JSON parser, but it means the bytes sent over
-// the wire (and compared in tests) don't match a plain literal like the
-// "&&" in the network test's client command. Use this - not json.Marshal -
-// for any SLA/microservice payload built in this package.
+// escaping turned off. json.Marshal escapes '&', '<' and '>' by default,
+// which would mangle a literal like the "&&" in the network test's client
+// command. Use this instead of json.Marshal for SLA/microservice payloads.
 func MarshalJSON(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -175,14 +168,12 @@ func MarshalJSON(v any) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
-// Decode unmarshals raw into v, unwrapping a double-encoded body: several
-// system_manager endpoints return json_util.dumps(...) through
-// flask-smorest, which serializes the already-serialized string again, so
-// the body is a JSON string containing JSON rather than the object/array
-// itself. Ports tests/helpers.py's json_body, which detects this by
-// unmarshalling once and checking whether the result is a string; peeking at
-// the first non-whitespace byte for a `"` here gets the same answer without
-// a speculative double parse.
+// Decode unmarshals raw into v, unwrapping a double-encoded body. Several
+// system_manager endpoints run json_util.dumps(...) output back through
+// flask-smorest's own JSON serialization, so the body ends up as a JSON
+// string containing JSON instead of the object/array itself. Ports
+// tests/helpers.py's json_body: instead of its unmarshal-then-check-if-string
+// approach, we just peek at the first non-whitespace byte for a `"`.
 func Decode(raw []byte, v any) error {
 	trimmed := bytes.TrimLeft(raw, " \t\r\n")
 	if len(trimmed) == 0 || trimmed[0] != '"' {

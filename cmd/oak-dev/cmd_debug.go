@@ -21,10 +21,10 @@ import (
 	"oak-dev/internal/testsuite"
 )
 
-// waitTimeout bounds --wait: long enough for a Python overlay's `pip install
-// debugpy` (the slowest case - a cold pip cache can take several seconds) to
-// finish and start listening, short enough that a genuinely broken container
-// fails a preLaunchTask rather than hanging VS Code's Run and Debug forever.
+// waitTimeout bounds --wait. Long enough for a Python overlay's `pip install
+// debugpy` to finish and start listening (worst case is a cold pip cache),
+// short enough that a broken container fails the preLaunchTask instead of
+// hanging VS Code's Run and Debug forever.
 const waitTimeout = 30 * time.Second
 
 func newDebugCmd() *cobra.Command {
@@ -64,13 +64,13 @@ root and cluster stacks), narrow it with --stack.`,
 	return cmd
 }
 
-// waitForPort blocks until host port is genuinely backed by a listener
-// inside the container, or timeout elapses. Used by --wait: the debug
-// overlays install/start their debugger from `command:`/the container
-// entrypoint, so the port isn't listening the instant ForceRecreate returns -
-// a VS Code preLaunchTask that races that would fail to attach intermittently
-// rather than deterministically. timeout is a parameter (waitTimeout at the
-// one real call site) so tests can bound the failure case without a 30s
+// waitForPort blocks until host port is actually backed by a listener inside
+// the container, or timeout elapses. --wait needs this because the debug
+// overlays install and start their debugger from `command:`/the container
+// entrypoint, so the port isn't listening the instant ForceRecreate returns.
+// A VS Code preLaunchTask that raced this would attach intermittently
+// instead of failing outright. timeout is a parameter (waitTimeout at the
+// one real call site) so tests can exercise the failure path without a 30s
 // sleep.
 func waitForPort(port int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
@@ -86,17 +86,16 @@ func waitForPort(port int, timeout time.Duration) error {
 	}
 }
 
-// portBacked reports whether addr is backed by an actual listener, not just
+// portBacked reports whether addr has an actual listener behind it, not just
 // Docker/OrbStack's host-side port forwarder. The forwarder's host socket
-// exists (and accepts the TCP handshake) as soon as the container's port
-// mapping is created - before dlv or debugpy has started inside it - and only
-// discovers there's nothing to relay to once it tries to open the backend
-// connection, closing the client side a moment later. A bare dial-success
-// check races that discovery and reports ready too early; waiting a beat on
-// a read distinguishes a forwarder that's about to give up (fails fast, well
-// under the deadline below) from a connection that's genuinely still open
-// (times out, since neither debugger sends anything before its client
-// speaks first).
+// accepts the TCP handshake as soon as the container's port mapping exists,
+// before dlv or debugpy has even started inside it. It only notices there's
+// nothing to relay to once it tries the backend connection, and closes the
+// client side a moment later. A bare dial-success check would report ready
+// too early, so we wait a beat on a read instead: a forwarder that's about
+// to give up closes fast, well under the deadline below, while a real
+// connection just sits there (neither debugger sends anything before its
+// client speaks first).
 func portBacked(addr string) bool {
 	conn, err := net.DialTimeout("tcp", addr, time.Second)
 	if err != nil {
@@ -111,19 +110,22 @@ func portBacked(addr string) bool {
 
 // debugOverlays returns the override-debug-*.yml files for every component
 // currently attached in this stack, plus every compose service those files
-// touch (which must all be recreated together for the overlay to take effect).
+// touch. All of them need recreating together, or the overlay doesn't take
+// effect.
 //
-// Both halves matter. A debug overlay is not part of the rendered topology, so
-// recreating a container without reapplying the overlays already on it detaches
-// them - nodeengine and netmanager share the `worker` container, so debugging
-// one used to knock the other's Delve listener out. And an overlay can
-// configure a service other than the one being debugged:
-// override-debug-cluster_service_manager.yml publishes its port on
-// cluster_manager, because cluster_service_manager has no network namespace of
-// its own, so recreating only cluster_service_manager would never publish it.
+// Two reasons that second part matters. A debug overlay isn't part of the
+// rendered topology, so recreating a container without reapplying the
+// overlays already on it detaches them - nodeengine and netmanager share the
+// `worker` container, so debugging one used to knock the other's Delve
+// listener out. And an overlay can configure a service other than the one
+// being debugged: override-debug-cluster_service_manager.yml publishes its
+// port on cluster_manager, since cluster_service_manager has no network
+// namespace of its own, so recreating only cluster_service_manager would
+// never publish it.
 //
-// A missing override file is a registry bug, not a user error, so it's reported
-// as such rather than left to surface as a raw `docker compose` failure.
+// A missing override file means the registry is wrong, not that the user did
+// anything wrong, so it's reported as a clear error instead of surfacing as
+// a raw `docker compose` failure.
 func debugOverlays(cfg *config.Config, stack, container string) (files, services []string, err error) {
 	services = []string{container}
 	for _, name := range debugstate.InStack(cfg.RepoRoot, stack) {
@@ -191,9 +193,10 @@ func pickTarget(cfg *config.Config, c components.Component) (components.Target, 
 }
 
 // runDebug recreates a component's container with a debugger in front of it
-// and prints the port to attach to. Split out of RunE so the sequence - guard
-// the worker, make it live, build with debug flags, record the attachment,
-// reapply every overlay on that container - is reachable from a test.
+// and prints the port to attach to. It's split out of RunE so the sequence
+// (guard the worker, make it live, build with debug flags, record the
+// attachment, reapply every overlay on that container) is reachable from a
+// test.
 func runDebug(cfg *config.Config, tl *tools, name string, noLive, wait bool) error {
 
 	c, err := components.Resolve(name)

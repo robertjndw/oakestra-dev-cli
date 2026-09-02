@@ -11,11 +11,11 @@ import (
 	"oak-dev/internal/target"
 )
 
-// launchPrefix and taskPrefix mark the "name"/"label" of an entry oak-dev
-// owns: generated fresh on every `vscode install`, safe to overwrite because
-// nothing but the generator is expected to spell a config that way. inputPrefix
-// does the same job for an input's "id" (camelCase, since ids can't contain
-// spaces or colons).
+// launchPrefix and taskPrefix mark the "name"/"label" of an entry as
+// oak-dev's own. It's regenerated fresh on every `vscode install`, so it's
+// safe to overwrite - nothing else should be spelling a config that way.
+// inputPrefix does the same job for an input's "id" (camelCase, since ids
+// can't contain spaces or colons).
 const (
 	launchPrefix = "oak-dev: "
 	taskPrefix   = "oak-dev: "
@@ -27,9 +27,9 @@ const (
 	tasksVersion  = "2.0.0"
 )
 
-// entry is one array element - a launch configuration, a task, or an input -
-// paired with the key (name/label/id) merge and uninstall use to recognize
-// it as oak-dev's own.
+// entry is one array element (a launch configuration, a task, or an input)
+// paired with the key (name/label/id) that merge and uninstall use to
+// recognize it as oak-dev's own.
 type entry struct {
 	key  string
 	data json.RawMessage
@@ -128,12 +128,12 @@ type generated struct {
 	inputs []entry
 }
 
-// relOrAbs expresses path relative to targetDir as ${workspaceFolder}/... so
-// a config installed alongside the source it debugs stays portable, or as an
-// absolute path when path falls outside targetDir entirely - the common case
-// for a config installed into $OAKESTRA_REPO or $OAKESTRA_NET_REPO, which
-// still needs to reach back into the oakestra-dev-cli checkout to run
-// `oak-dev` at all.
+// relOrAbs expresses path relative to targetDir as ${workspaceFolder}/...,
+// so a config installed alongside the source it debugs stays portable. If
+// path falls outside targetDir entirely, it falls back to an absolute path
+// instead - the common case when installing into $OAKESTRA_REPO or
+// $OAKESTRA_NET_REPO, which still needs to reach back into the
+// oakestra-dev-cli checkout to run `oak-dev` at all.
 func relOrAbs(targetDir, path string) string {
 	rel, err := filepath.Rel(targetDir, path)
 	if err != nil || strings.HasPrefix(rel, "..") {
@@ -148,11 +148,11 @@ func relOrAbs(targetDir, path string) string {
 func mustJSON(v any) json.RawMessage {
 	data, err := json.Marshal(v)
 	if err != nil {
-		// Every value passed here is a struct literal built entirely from
-		// this package's own types - a marshal failure would mean a field
-		// holds something JSON genuinely can't encode (a channel, a func),
-		// which is a bug in the generator, not a runtime condition to
-		// recover from.
+		// Everything passed here is a struct literal built from this
+		// package's own types, so a marshal failure means a field holds
+		// something JSON can't encode (a channel, a func). That's a bug
+		// in the generator, so panic instead of plumbing an error return
+		// through every caller.
 		panic(fmt.Sprintf("oak-dev/internal/vscode: marshaling %#v: %v", v, err))
 	}
 	return data
@@ -169,9 +169,9 @@ func componentLabel(c components.Component) string {
 }
 
 // debugTargets pairs each Target that has a debugger with whether its owning
-// component needs --stack to disambiguate it (true exactly when the
-// component has more than one such target - currently just scheduler, split
-// across the root and cluster stacks).
+// component needs --stack to disambiguate it. That's true only when the
+// component has more than one such target - right now just the scheduler,
+// which is split across the root and cluster stacks.
 type debugTarget struct {
 	c     components.Component
 	t     components.Target
@@ -207,11 +207,11 @@ func (d debugTarget) launchName() string {
 
 // debugTaskLabel is the preLaunchTask that runs `oak-dev debug` for this
 // exact target before the debugger attaches. It's left visible (not Hide:
-// true) so it doubles as the general-purpose "run oak-dev debug on some
-// component" command - a picker-driven equivalent would need to prompt for
-// component and stack together, which pickString can't express as two
-// correlated values, and a stack-unaware picker is exactly the ambiguous/
-// out-of-scope failure this per-target task avoids.
+// true) so it also works as a general-purpose "run oak-dev debug on some
+// component" command. A picker-driven version would need to prompt for a
+// component and a stack together, and pickString can only ever resolve to
+// one value, so this per-target task is what keeps the selection
+// unambiguous.
 func (d debugTarget) debugTaskLabel() string {
 	if d.multi {
 		return taskPrefix + "debug " + d.c.Name + " (" + d.t.Stack + ")"
@@ -219,13 +219,13 @@ func (d debugTarget) debugTaskLabel() string {
 	return taskPrefix + "debug " + d.c.Name
 }
 
-// debugTaskArgs always pins --stack to this target's own stack: sticky scope
-// (see AGENTS.md) means the CLI's ambient scope at the moment VS Code runs
-// this task may not match the target this launch config was generated for
-// (e.g. `up --stack worker` left cluster/worker in scope, but this task
-// debugs a root-only component) - pinning removes that dependency entirely,
-// not just for the one component (scheduler) that's ambiguous within a
-// single scope.
+// debugTaskArgs always pins --stack to this target's own stack. Sticky scope
+// (see AGENTS.md) means the CLI's ambient scope when VS Code runs this task
+// might not match what the launch config was generated for - e.g.
+// `up --stack worker` left cluster/worker in scope, but this task debugs a
+// root-only component. Pinning here removes the dependency on ambient scope
+// for every target, not just scheduler, which is the only component that's
+// actually ambiguous within a single scope.
 func (d debugTarget) debugTaskArgs() []string {
 	return []string{"debug", d.c.Name, "--stack", d.t.Stack, "--wait"}
 }

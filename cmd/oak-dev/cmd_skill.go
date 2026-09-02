@@ -9,7 +9,7 @@ import (
 )
 
 // newSkillCmd is the one command that must work outside an
-// oakestra-dev-cli checkout - most sessions that want it are editing a
+// oakestra-dev-cli checkout. Most sessions that want it are editing a
 // *different* repo (../oakestra, ../oakestra-net, oakestra-deploy) and just
 // need the skill planted there. See wireCompletionInstall/annotationNoConfig
 // in root.go for how it opts out of loadConfigInto.

@@ -26,9 +26,9 @@ func TestSmokeRegistration(t *testing.T) {
 	})
 
 	t.Run("worker_attached", func(t *testing.T) {
-		// activeCluster already implies a worker is attached and reporting;
-		// this asserts it directly against the resource abstractor, which
-		// is what cluster_manager pushes to the root every 15s.
+		// activeCluster already implies a worker is attached and reporting,
+		// but check it directly against the resource abstractor too - that's
+		// what cluster_manager pushes to the root every 15s.
 		activeCluster(t)
 
 		candidate := waitFor(t, oakapi.Wait{

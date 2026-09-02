@@ -70,14 +70,16 @@ func (s *Suite) Run(smoke bool, extra ...string) error {
 }
 
 // derivedTimeout sizes go test's -timeout off the configured E2E waits
-// instead of trusting its 10-minute default, which the deployment and
-// network tests alone can blow through polling worst case. Blowing -timeout
-// prints a goroutine dump for every live goroutine rather than a readable
-// test failure, so this errs generous: twice the ready wait (the suite logs
-// in and waits for an active cluster up front) plus eight deploy waits (each
-// of 03/04's steps polls to a terminal status once), rounded up to a whole
-// minute, with a 10 minute floor for when cfg.E2E is zero (e.g. a bare
-// &config.Config{} in a test).
+// instead of trusting its 10-minute default. The deployment and network
+// tests alone can poll longer than that in the worst case, and a blown
+// -timeout prints a goroutine dump for every live goroutine instead of a
+// readable test failure - so this errs generous.
+//
+// The estimate is twice the ready wait (the suite logs in and waits for an
+// active cluster up front) plus eight deploy waits (each of 03/04's steps
+// polls to a terminal status once), rounded up to a whole minute. Falls back
+// to a 10 minute floor when cfg.E2E is zero, e.g. a bare &config.Config{} in
+// a test.
 func derivedTimeout(cfg *config.Config) time.Duration {
 	const floor = 10 * time.Minute
 	ready, deploy := cfg.E2E.ReadyTimeout, cfg.E2E.DeployTimeout

@@ -16,16 +16,14 @@ import (
 // deleted, in that order.
 //
 // The four steps are ordered subtests using `if !t.Run(name, fn) { return }`
-// rather than four independent top-level tests. t.Fatalf inside a subtest
-// only unwinds that subtest's own goroutine - without the early return, a
-// failed deploy would still let "scale up to two instances" run against an
-// application that never reached RUNNING, producing three cascading
-// failures instead of one. pytest's four independent test functions had
-// exactly that problem; t.Run's bool return is what fixes it here.
+// instead of four independent top-level tests. t.Fatalf inside a subtest only
+// unwinds that subtest, so without the early return a failed deploy would
+// still let "scale up to two instances" run against an application that
+// never reached RUNNING - three cascading failures instead of one. pytest's
+// four independent test functions had exactly that problem.
 func TestDeploymentLifecycle(t *testing.T) {
-	// No t.Parallel: these subtests mutate one application's instance count
-	// in sequence, and share the one worker node with every other test in
-	// this package.
+	// No t.Parallel: these subtests change one application's instance count
+	// in sequence, and share the one worker node with every other test here.
 	s := settings(t)
 	cli := rootAPI(t)
 	activeCluster(t)

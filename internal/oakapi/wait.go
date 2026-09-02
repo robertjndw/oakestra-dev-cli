@@ -41,13 +41,12 @@ type Wait struct {
 // Poll calls check repeatedly until it succeeds, returns a Terminal error, or
 // w.Timeout elapses.
 //
-// Unlike Python's wait_until, check has no truthy/falsy path: a "not ready
-// yet" result must come back as a non-nil, non-terminal error, never as a
-// zero value with a nil error. wait_until's `return None` case was actively
-// harmful - it reset last_error to nil, so a poll that returned falsy on
-// every attempt timed out with no explanation at all. Requiring a
-// descriptive error on every non-success return means every timeout here
-// carries the last observed reason.
+// Unlike Python's wait_until, check has no truthy/falsy path: "not ready
+// yet" must be a real error, never a zero value with nil error. wait_until's
+// `return None` case actually made debugging harder in the old suite - it
+// reset last_error to nil, so a poll that kept returning falsy timed out
+// with no explanation. Requiring an error on every non-success return means
+// a timeout here always carries the last observed reason.
 func Poll[T any](w Wait, check func() (T, error)) (T, error) {
 	interval := w.Interval
 	if interval <= 0 {
@@ -62,11 +61,11 @@ func Poll[T any](w Wait, check func() (T, error)) (T, error) {
 	}
 
 	for first := true; ; first = false {
-		// The deadline is checked before every check call except the very
-		// first, so Poll always tries at least once even with a tiny or zero
-		// Timeout, but never makes one extra call after the budget is spent -
-		// a long default Interval (3s) must not buy check() a bonus attempt
-		// once the deadline has already passed during that sleep.
+		// Skip the deadline check on the first pass so Poll always tries at
+		// least once, even with a tiny or zero Timeout. After that, check
+		// again before every call: a 3s default Interval shouldn't buy
+		// check() a bonus attempt just because the deadline passed during
+		// the last sleep.
 		if !first && !time.Now().Before(deadline) {
 			return timeout()
 		}

@@ -1,10 +1,10 @@
 // Package oakapi is the stack-free plumbing behind the Oakestra E2E suite:
 // an HTTP client for the root API, SLA/job document types, a generic
 // poll-until-ready helper, and the settings that tie them to a running
-// stack. It has no Docker or filesystem dependency beyond .env, so it
-// compiles and tests in `go test ./... -race` with no stack running - the
-// e2e package (build-tagged, not part of this package) is what actually
-// needs one.
+// stack. It has no Docker or filesystem dependency beyond .env, so
+// `go test ./... -race` can compile and run it with no stack running.
+// Actually needing a live stack is the build-tagged e2e package's job, not
+// this one's.
 package oakapi
 
 import (
@@ -14,10 +14,9 @@ import (
 	"oak-dev/internal/config"
 )
 
-// Settings mirrors config.E2ECfg. It is redeclared here rather than reused
-// directly so that internal/config - a package the E2E binary otherwise has
-// no reason to import beyond LoadSettings - stays an implementation detail
-// callers in e2e/ don't need to know about.
+// Settings mirrors config.E2ECfg. It's redeclared here instead of reused
+// directly so callers in e2e/ don't need to know about internal/config,
+// which this package otherwise only imports for LoadSettings.
 type Settings struct {
 	RootAPI       string
 	ClusterAPI    string
@@ -29,14 +28,15 @@ type Settings struct {
 }
 
 // LoadSettings resolves the E2E suite's settings by locating the
-// oakestra-dev-cli checkout (config.FindRoot, walking up from the process
-// cwd for compose/worker.yml) and reading its .env through config.LoadE2E.
+// oakestra-dev-cli checkout (config.FindRoot walks up from the process cwd
+// looking for compose/worker.yml) and reading its .env through
+// config.LoadE2E.
 //
-// If FindRoot fails, this falls back to process-env-plus-defaults instead of
-// returning an error: `go test -c` produces a standalone binary that can be
-// copied and run from anywhere, and a suite that only needs OAK_ROOT_API et
-// al set as plain environment variables should still work from such a
-// binary - it's only the convenience of reading .env that's lost.
+// If FindRoot fails, we fall back to process-env-plus-defaults rather than
+// erroring out. `go test -c` produces a standalone binary that can be
+// copied and run from anywhere, so a suite that just needs OAK_ROOT_API et
+// al set as plain env vars should keep working; it only loses the
+// convenience of reading .env.
 func LoadSettings() (Settings, error) {
 	wd, err := os.Getwd()
 	if err != nil {

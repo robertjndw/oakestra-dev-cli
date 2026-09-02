@@ -20,13 +20,13 @@ var colors = []string{"\033[36m", "\033[35m", "\033[33m", "\033[32m", "\033[34m"
 
 const reset = "\033[0m"
 
-// shutdownGrace bounds how long Run waits, once ctx is cancelled, for
-// sources to finish on their own before returning anyway. Command-backed
-// sources are asked to exit via SIGTERM (see runOne); func-backed sources
-// (the file watchers) are expected to honor ctx themselves. A source still
-// running past this deadline is left running rather than making `oak-dev
-// dev` itself unkillable - see cmd_dev.go's watchSources for why an
-// in-flight reload uses context.WithoutCancel to survive it.
+// shutdownGrace is how long Run waits after ctx is cancelled for sources to
+// exit on their own before giving up and returning anyway. Command-backed
+// sources get a SIGTERM (see runOne); func-backed sources (the file
+// watchers) are expected to honor ctx themselves. Anything still running
+// past this deadline is left running - better that than making `oak-dev
+// dev` itself unkillable. See cmd_dev.go's watchSources for why an
+// in-flight reload uses context.WithoutCancel to survive this.
 const shutdownGrace = 10 * time.Second
 
 // Source is one thing to stream, tagged with a short prefix. Exactly one of
@@ -45,10 +45,10 @@ type Source struct {
 	Name string
 	Args []string
 
-	// Func, when set, replaces Name/Args: it runs in-process rather than as
-	// an external command. Lines written to out are tagged and interleaved
-	// exactly like a command's stdout. Used by the source-change watchers,
-	// which used to shell out to the external `watchexec` binary.
+	// Func, when set, replaces Name/Args and runs in-process instead of as
+	// an external command. Lines written to out get tagged and interleaved
+	// just like a command's stdout. This is how the source-change watchers
+	// work now; they used to shell out to the external `watchexec` binary.
 	Func func(ctx context.Context, out io.Writer) error
 }
 
@@ -56,13 +56,12 @@ type Source struct {
 // every source exits. Each line is written to stdout as "[tag] line" (with
 // a distinct color per tag when stdout is a terminal-friendly fd).
 //
-// On cancellation, if any source is Func-backed, Run gives every source up
-// to shutdownGrace to exit on its own - long enough for an in-flight reload
-// to finish - before returning regardless. Command-only source sets (e.g.
-// `oak-dev logs`, which has no reload to protect) return as soon as ctx is
-// cancelled, same as before this grace period existed; there's nothing
-// there that benefits from the wait, only a command that would otherwise
-// hang for up to shutdownGrace on a slow `docker compose logs -f` exit.
+// On cancellation, Run gives every source up to shutdownGrace to exit on
+// its own if any source is Func-backed - long enough for an in-flight
+// reload to finish - then returns regardless. Command-only source sets
+// (e.g. `oak-dev logs`, which has no reload to protect) skip the wait and
+// return as soon as ctx is cancelled, since the only thing the grace period
+// would buy there is a slow `docker compose logs -f` exit hanging around.
 func Run(ctx context.Context, sources []Source) error {
 	var wg sync.WaitGroup
 	var mu sync.Mutex

@@ -132,8 +132,8 @@ func TestBuildRejectsPythonWithoutRunningAnything(t *testing.T) {
 	}
 }
 
-// UnitTest is the fastest rung on the loop ladder: host-native, no containers,
-// no cross-compilation - so it must not inherit the GOOS/GOARCH of a build.
+// UnitTest runs host-native with no cross-compilation, so it must not
+// inherit the GOOS/GOARCH of a build.
 func TestUnitTestRunsInSourceDir(t *testing.T) {
 	cfg := testConfig(t)
 	rec := proc.NewRecorder()

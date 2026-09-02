@@ -24,9 +24,9 @@ const (
 
 // annotationNoConfig marks a command (and, via hasNoConfigAnnotation, all of
 // its subcommands) as exempt from loadConfigInto's "is this an
-// oakestra-dev-cli checkout" requirement. `skill` and `completion` both
-// need to run from *other* repos - that's the whole point of `oak-dev skill
-// install` - so neither can require the config this repo's checkout provides.
+// oakestra-dev-cli checkout" requirement. `skill` and `completion` are meant
+// to run from other repos (that's the point of `oak-dev skill install`), so
+// they can't require config only this repo's checkout has.
 const annotationNoConfig = "oak-dev/no-config"
 
 // version is overridable at link time (-ldflags "-X main.version=...").
@@ -103,12 +103,12 @@ unambiguous prefix (cluster_man). Configuration lives in oak-dev.yaml.`,
 	return root
 }
 
-// wireCompletionInstall adds `install` under cobra's own auto-generated
-// `completion` command. That command doesn't normally exist until Execute()
-// creates it lazily, so it's forced into being here (InitDefaultCompletionCmd
-// is safe to call early - it no-ops on a second call) purely so `install` has
-// a parent to attach to; the bash/zsh/fish/powershell children it brings are
-// exactly cobra's defaults, untouched.
+// wireCompletionInstall adds `install` under cobra's auto-generated
+// `completion` command, which otherwise doesn't exist until Execute() creates
+// it lazily. Calling InitDefaultCompletionCmd early just to get a parent to
+// attach `install` to is safe - it no-ops if called again later. The
+// bash/zsh/fish/powershell subcommands it brings along are untouched cobra
+// defaults.
 func wireCompletionInstall(root *cobra.Command) {
 	root.InitDefaultCompletionCmd()
 	for _, c := range root.Commands() {

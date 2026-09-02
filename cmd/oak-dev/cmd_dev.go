@@ -55,11 +55,11 @@ Ctrl-C stops everything.`,
 			}
 
 			// Bring the stack up (or just render it, with --no-up) before
-			// resolving/promoting watched components: on a fresh checkout,
-			// promoting a worker-stack component (e.g. `oak-dev dev ne`) has
-			// to recreate the worker container, and worker.yml's network is
-			// `external: true` - it doesn't exist until the root/cluster
-			// stacks have created it. Doing this first, rather than inside
+			// resolving/promoting watched components. worker.yml's network is
+			// `external: true`, so it doesn't exist until the root/cluster
+			// stacks have created it, and on a fresh checkout promoting a
+			// worker-stack component (e.g. `oak-dev dev ne`) recreates the
+			// worker container. Doing this here, rather than inside
 			// watchedComponents, avoids a "network oakestra not found" error
 			// on the very first run.
 			if noUp {
@@ -177,10 +177,11 @@ func watchSources(cfg *config.Config, watched []components.Component, self, test
 	return out
 }
 
-// reloadOnChange runs once a debounced source change fires for component c:
-// it skips the reload while a guarded (worker-resident) component's mid-suite
-// restart would strand scheduled instances, otherwise cross-compiles/restarts
-// it via `<self> reload <c>` and optionally re-runs the smoke suite.
+// reloadOnChange runs once a debounced source change fires for component c.
+// It skips the reload if c is guarded (worker-resident) and a test run is in
+// progress, since restarting the worker mid-suite would strand scheduled
+// instances. Otherwise it cross-compiles/restarts via `<self> reload <c>`
+// and optionally re-runs the smoke suite.
 func reloadOnChange(ctx context.Context, w io.Writer, cfg *config.Config, c components.Component, self, testMode string, guarded bool) {
 	if guarded && testsuite.IsLocked(cfg) {
 		fmt.Fprintf(w, "oak-dev: skipping %s reload - oak-dev test is running (never restart the worker mid-suite)\n", c.Name)
@@ -200,16 +201,16 @@ func reloadOnChange(ctx context.Context, w io.Writer, cfg *config.Config, c comp
 }
 
 // runTagged re-execs oak-dev itself with args, streaming its combined
-// stdout/stderr into w (`reload`/`test --smoke` already narrate their own
-// failures - e.g. the BUILD FAILED banner - so the only thing the caller needs
-// back is whether it succeeded).
+// stdout/stderr into w. `reload`/`test --smoke` already narrate their own
+// failures (the BUILD FAILED banner, etc.), so all the caller needs back is
+// whether it succeeded.
 //
-// The child is pinned to this run's repo root and scope with -C/--stack rather
-// than inheriting them from the process environment: the watcher's working
-// directory is the *source* checkout ($OAKESTRA_REPO), where a bare `oak-dev
-// reload` would fail its "is this an oakestra-dev-cli checkout" test, and
-// --stack keeps a `dev --stack root` session from reloading through whatever
-// scope .generated/stack happens to hold.
+// The child gets its repo root and scope pinned explicitly via -C/--stack
+// rather than inheriting them from the process environment. The watcher's
+// working directory is the *source* checkout ($OAKESTRA_REPO), where a bare
+// `oak-dev reload` would fail its "is this an oakestra-dev-cli checkout"
+// check, and --stack keeps a `dev --stack root` session from reloading
+// through whatever scope .generated/stack happens to hold.
 func runTagged(ctx context.Context, w io.Writer, cfg *config.Config, self string, args ...string) error {
 	full := append([]string{"-C", cfg.RepoRoot, "--stack", cfg.Stack}, args...)
 	cmd := exec.CommandContext(ctx, self, full...)

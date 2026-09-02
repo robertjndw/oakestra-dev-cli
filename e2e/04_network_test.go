@@ -10,23 +10,22 @@ import (
 	"oak-dev/internal/oakapi"
 )
 
-// webRRIP is a round-robin service IP from Oakestra's 10.30.0.0/16 service
-// range, requested explicitly in the SLA so the client microservice's
-// command knows the target upfront - matches tests/test_04_network.py.
+// webRRIP is a round-robin service IP from Oakestra's 10.30.0.0/16 range.
+// It's requested explicitly in the SLA so the client microservice's command
+// knows the target address upfront, matching tests/test_04_network.py.
 const webRRIP = "10.30.30.30"
 
 // TestOverlayNetwork proves the overlay data plane works end to end, ported
 // from tests/test_04_network.py: an nginx 'web' service gets a fixed
 // round-robin service IP, then a one-shot busybox 'client' wgets that IP
-// from inside its own container. NodeEngine reports a one-shot job that
-// exits 0 as COMPLETED, so a COMPLETED client is the entire proof that
-// traffic actually crossed client netns -> proxy tun -> service IP
-// translation -> web instance; a client that silently never ran would
-// otherwise look exactly like a pass.
+// from inside its own container. NodeEngine reports a one-shot job as
+// COMPLETED only if it exits 0, so a COMPLETED client proves traffic really
+// crossed client netns -> proxy tun -> service IP translation -> web
+// instance. A client that silently never ran would otherwise look like a
+// pass too.
 func TestOverlayNetwork(t *testing.T) {
-	// No t.Parallel: web must reach RUNNING before the client is deployed,
-	// and both share the one worker node with every other test in this
-	// package.
+	// No t.Parallel: web has to reach RUNNING before the client is deployed,
+	// and both share the one worker node with every other test here.
 	s := settings(t)
 	cli := rootAPI(t)
 	activeCluster(t)
@@ -49,8 +48,8 @@ func TestOverlayNetwork(t *testing.T) {
 	clientID := a.Services["client"]
 
 	// Registered after registerApp's own t.Cleanup (which deletes the
-	// application), so it runs first: cleanups run LIFO, and instances must
-	// be undeployed before the application that owns them is deleted.
+	// application), so this one runs first: cleanups run LIFO, and instances
+	// need to come down before the app that owns them is deleted.
 	t.Cleanup(func() {
 		undeployAllInstances(t, cli, webID)
 		undeployAllInstances(t, cli, clientID)
@@ -89,8 +88,8 @@ func TestOverlayNetwork(t *testing.T) {
 			if job == nil {
 				return struct{}{}, oakapi.Terminal("client service %s disappeared while waiting", clientID)
 			}
-			// FAILED/DEAD here means the wget loop exhausted its retries -
-			// the overlay did not deliver traffic to the web service.
+			// FAILED/DEAD means the wget loop exhausted its retries, i.e. the
+			// overlay never delivered traffic to the web service.
 			if err := job.NotFailed(); err != nil {
 				return struct{}{}, err
 			}
