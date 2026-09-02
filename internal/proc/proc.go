@@ -1,7 +1,7 @@
 // Package proc is the seam between oak-dev and the external programs it
-// drives: docker, go, python3 and pytest. Every such command is described as
-// a Spec and handed to a Runner, so a test can substitute a Recorder for the
-// real process and assert on what would have run.
+// drives: docker and go. Every such command is described as a Spec and
+// handed to a Runner, so a test can substitute a Recorder for the real
+// process and assert on what would have run.
 //
 // Before this existed, each caller built its own exec.Cmd and wired its own
 // stdio, which meant nothing that orchestrated docker could be tested at all:

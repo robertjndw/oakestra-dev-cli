@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-E2E testing harness for [Oakestra](https://github.com/oakestra/oakestra) on macOS. The orchestrator code is NOT here - it is built from a local `oakestra` checkout pointed to by `OAKESTRA_REPO` (default `../oakestra`, configured in `.env`/`oak-dev.yaml`). The overlay-networking components (root/cluster service managers, NetManager) come from a separate `oakestra-net` checkout, `OAKESTRA_NET_REPO` (default `../oakestra-net`) - optional, since those three components normally run from pinned GHCR images/release binaries. This repo contains only the glue: the `oak-dev` Go CLI (`cmd/oak-dev`, `internal/`) driving three Docker Compose projects, a dockerized worker image, macOS-specific compose overrides, and a pytest E2E suite. `oak-dev --help` (or README.md) is the source of truth for what it can do: partial stacks, source mounted from your working tree (no image rebuild for Python/Go edits), cross-compiling, debugger attach, and a watch+aggregated-logs `dev` command. The `Makefile` covers only `make install` and the `vm-*` OrbStack targets.
+E2E testing harness for [Oakestra](https://github.com/oakestra/oakestra) on macOS. The orchestrator code is NOT here - it is built from a local `oakestra` checkout pointed to by `OAKESTRA_REPO` (default `../oakestra`, configured in `.env`/`oak-dev.yaml`). The overlay-networking components (root/cluster service managers, NetManager) come from a separate `oakestra-net` checkout, `OAKESTRA_NET_REPO` (default `../oakestra-net`) - optional, since those three components normally run from pinned GHCR images/release binaries. This repo contains only the glue: the `oak-dev` Go CLI (`cmd/oak-dev`, `internal/`) driving three Docker Compose projects, a dockerized worker image, macOS-specific compose overrides, and a Go E2E suite (`e2e/`, plus its untagged helper library `internal/oakapi`). `oak-dev --help` (or README.md) is the source of truth for what it can do: partial stacks, source mounted from your working tree (no image rebuild for Python/Go edits), cross-compiling, debugger attach, and a watch+aggregated-logs `dev` command. The `Makefile` covers only `make install` and the `vm-*` OrbStack targets.
 
 This file (and the CLAUDE.md symlink to it) covers *changing this repo*. For
 *driving the CLI* - the doc an agent needs while working in `../oakestra`,
@@ -18,7 +18,7 @@ This file (and the CLAUDE.md symlink to it) covers *changing this repo*. For
 make install                         # build oak-dev onto your PATH (PREFIX=~/.local/bin)
 cp .env.example .env                 # once
 cp oak-dev.yaml.example oak-dev.yaml # once - pick live: components + stack
-oak-dev doctor --fix                 # preflight + venv + protobuf stubs + oak CLI config
+oak-dev doctor --fix                 # preflight + protobuf stubs + oak CLI config
 oak-dev dev                          # start everything, watch for edits, stream logs
 oak-dev up / oak-dev down            # start/stop (--stack worker for a subset)
 oak-dev test                         # full suite (starts the stack if needed)
@@ -26,9 +26,9 @@ oak-dev test --smoke                 # health + registration only
 oak-dev --help                       # all fourteen commands, grouped
 oak-dev config                       # print resolved settings; `config set <key> <value>` edits oak-dev.yaml
 
-# Single test file / single test - pass through with --
-oak-dev test -- tests/test_03_deployment.py
-oak-dev test -- -k test_worker_attached
+# Single test / single suite - pass through with --
+oak-dev test -- -run TestDeploymentLifecycle
+oak-dev test -- -run TestSmokeRegistration/worker_attached
 
 # Iteration loops after editing code in $OAKESTRA_REPO ($OAKESTRA_NET_REPO for
 # rsm/csm/nm). Components take an alias or any unambiguous prefix: sm, jwt,
@@ -54,21 +54,28 @@ oak-dev down --volumes               # wipe volumes, fresh start (confirm prompt
 oak-dev reset                        # drop DBs + restart services, no image work (~15s)
 ```
 
-The venv lives at `.venv` (repo root) and is created automatically by `oak-dev doctor` or any `oak-dev test` run (`internal/testsuite.EnsureVenv`). "Created" means the requirements install finished: it is stamped with `.venv/.oak-dev-requirements-installed` only on success, so a half-installed venv is retried rather than inherited, and `doctor` fails its venv check instead of reporting success over it.
-
 `--stack full|root|cluster|worker` is a persistent flag on every command and always means *scope*. The scope passed to `up` is sticky (`.generated/stack`) until the next plain `down`; `oak-dev status` prints which scope is active and where it came from.
 
 ## Developing oak-dev itself
 
-`.github/workflows/ci.yml` runs on every PR: a `go` job (build/vet/gofmt/test), a `lint` job (`golangci-lint`, config in `.golangci.yml`; `ruff check`/`ruff format --check` on `tests/`, config in `pyproject.toml`), and an `e2e-smoke` job that clones `oakestra@develop` alongside this repo, brings the stack up on an ubuntu-latest runner, and runs `oak-dev test --smoke`. Match all of that locally before pushing:
+`.github/workflows/ci.yml` runs on every PR, two jobs, both `ubuntu-latest`: a
+`go` job (build, vet, `go test -tags e2e -run '^$' ./e2e/...` to compile-check
+the tagged suite without a stack, gofmt, `go test ./... -race`) and a `lint`
+job (`golangci-lint`, config in `.golangci.yml` - `build-tags: [e2e]` there is
+what makes the linter see the tagged files at all). Neither job brings up a
+stack or clones `oakestra`; there is no live-stack job in this repo's CI.
+Match the `go` job locally before pushing:
 ```bash
 go build ./... && go vet ./... && gofmt -l .
+go test -tags e2e -run '^$' ./e2e/...
+go vet -tags e2e ./...
 go test ./... -race        # internal/watch and multilog are concurrent - always run with -race
 golangci-lint run ./...
-uvx ruff check tests/ && uvx ruff format --check tests/
 make install                # rebuild the installed binary to manually exercise a change
 ```
-Tests are stdlib-only (no testify), white-box (`package x`, not `x_test`), table-driven, using `t.TempDir()`/`t.Setenv()`/`t.Helper()` - see `internal/config/config_test.go`.
+Tests are stdlib-only (no testify), white-box (`package x`, not `x_test`), table-driven, using `t.TempDir()`/`t.Setenv()`/`t.Helper()` - see `internal/config/config_test.go` and `internal/oakapi/*_test.go` for worked examples.
+
+`skills/` is embedded into the binary via `embed.go`, so an edit to `SKILL.md` or `references/*.md` isn't visible to `oak-dev skill install`/`skill status` until `make install` rebuilds the binary those commands run from.
 
 ## Architecture
 
@@ -102,14 +109,78 @@ Startup order is load-bearing:
 
 `/var/lib/containerd` is an anonymous volume (see `compose/worker.yml`): containerd overlayfs snapshots cannot be created on the container's own overlayfs (rootfs mounts fail with `invalid argument`). Workloads run in containerd namespace `oakestra`.
 
-### Test suite (`tests/`)
+### E2E suite (`e2e/`)
 
-- Files run in order: `test_01_health` → `test_02_registration` → `test_03_deployment` → `test_04_network` → `test_05_failures`. The deployment and network tests share module-scoped app fixtures and intentionally mutate shared state in sequence (deploy → scale → undeploy/delete; web before client).
-- `test_04_network` proves the overlay data plane: it requests a fixed RR service IP in the SLA (`10.30.30.30`) and uses a `one_shot` busybox client whose exit code becomes the verdict (exit 0 → NodeEngine reports `COMPLETED`). `test_05_failures` expects failure statuses, so it deliberately does NOT use `assert_not_failed`.
-- `wait_until` (helpers.py) retries all exceptions EXCEPT `AssertionError`, which propagates immediately - that is the fail-fast contract used by `assert_not_failed` to abort polling when a job hits a terminal status. Keep that distinction when adding checks.
-- `json_body` unwraps double-encoded responses: several system_manager endpoints return `json_util.dumps(...)` through flask-smorest, producing a JSON string containing JSON. Use it for any new API call.
-- `ApiClient` re-logs-in on 401 (JWT expires after ~15 min).
-- Config via env (see `.env.example`): `OAK_ROOT_API`, `OAK_READY_TIMEOUT` (boot/registration waits), `OAK_DEPLOY_TIMEOUT` (RUNNING waits, includes image pull).
+The suite lives behind `//go:build e2e` (`e2e/doc.go` has the full package
+doc); the HTTP client, SLA structs and polling it's built on live in
+`internal/oakapi`, which carries no build tag and is unit-tested in CI on a
+runner with no Docker.
+
+- Files are numbered (`01_health` → `02_registration` → `03_deployment` →
+  `04_network` → `05_failures`) and Go compiles/runs a package's top-level
+  tests in sorted-filename order, so a plain run reproduces that order. But
+  that's fail-fast ergonomics only - the ordering that actually matters
+  (deploy before scale before undeploy; web before client) is structural,
+  encoded as ordered subtests within one top-level test via
+  `if !t.Run(name, fn) { return }` (see `TestDeploymentLifecycle`,
+  `TestOverlayNetwork`). A bare `t.Run` without the `if` doesn't stop the
+  sequence on failure - don't drop the guard when adding a step.
+- `TestOverlayNetwork` proves the overlay data plane: it requests a fixed RR
+  service IP in the SLA (`10.30.30.30`) and uses a `one_shot` busybox client
+  whose exit code becomes the verdict (exit 0 → NodeEngine reports
+  `COMPLETED`) - a client container that silently never ran would otherwise
+  look identical to a pass. `TestFailureReporting` expects failure statuses,
+  so it deliberately never calls `(*Job).NotFailed()` - that helper exists to
+  abort a poll early, and here failure is the thing under test.
+- `oakapi.Poll` retries every error except one built with `oakapi.Terminal`,
+  which aborts immediately - the Go equivalent of the pytest suite's
+  `AssertionError`-propagates-but-everything-else-retries contract.
+  `(*Job).NotFailed()` returns a `Terminal` error when a job hits a status in
+  `oakapi.FailureStatuses`, so a poll checking it stops within one interval
+  of a terminal state instead of running out the full deploy timeout. Keep
+  that distinction when adding a new poll: a "not ready yet" check must
+  return a real error, never a zero value with a nil error, or a check that's
+  always false looks exactly like a pass.
+- `oakapi.Decode` unwraps double-encoded responses: several system_manager
+  endpoints return `json_util.dumps(...)` through flask-smorest, producing a
+  JSON string containing JSON rather than the object itself. Use it for any
+  new API call.
+- `oakapi.Client` re-logs-in on 401 (JWT expires after ~15 min) - and does it
+  the Go-specific way that matters: a `*bytes.Reader` request body is
+  consumed by its first send, so retrying by resending the same
+  `*http.Request` silently replays an empty body and turns an expired token
+  into a confusing 400 rather than a clean retry. `attempt` in
+  `internal/oakapi/client.go` rebuilds a fresh request from the held
+  `[]byte` on every attempt for exactly this reason - don't "simplify" a
+  retry back to reusing one `*http.Request`.
+- Nothing in this package calls `t.Parallel`, anywhere, ever - every test
+  contends for the same one worker node and cluster, and concurrent subtests
+  would race deploys/scales/capacity against each other.
+- `-count=1` and `-timeout` on the `go test` invocation are not cosmetic: `go
+  test` caches a successful result keyed on package files and env vars read,
+  not network I/O, so a second run against a stack that's since broken can
+  replay a stale PASS in milliseconds without `-count=1`; the derived
+  `-timeout` (see `internal/testsuite.derivedTimeout`) exists because the
+  default 10 minutes is shorter than this suite's own worst-case polling
+  budget, and blowing it prints a goroutine dump instead of a readable test
+  failure.
+- `TestSmokeHealth` and `TestSmokeRegistration` are the only two tests
+  matching `-run '^TestSmoke'`. The `TestSmoke` prefix on a function name IS
+  the entire smoke-mode contract - there is no separate list to keep in
+  sync, so a new smoke-safe test opts in purely by being named that way.
+- SLA/microservice structs (`internal/oakapi/sla.go`) must not gain a blanket
+  `,omitempty` and must keep `Cmd`/`AddedFiles`/`Constraints` initialized to
+  non-nil empty slices, never `nil` - a nil Go slice marshals to `null`, not
+  `[]`, which the pytest suite's SLA payloads never sent. Both are enforced
+  by golden-JSON tests in `internal/oakapi/sla_test.go`; if you touch that
+  file's marshalling, check the goldens still assert `"cmd":[]` and every
+  zero-valued field present rather than dropped.
+- Config via env (see `.env.example`): `OAK_ROOT_API`/`OAK_CLUSTER_API`/
+  `OAK_ROOT_RA`/`OAK_USERNAME`/`OAK_PASSWORD`/`OAK_READY_TIMEOUT`/
+  `OAK_DEPLOY_TIMEOUT`, resolved with the usual process env > `.env` >
+  `oak-dev.yaml` > default precedence by `config.LoadE2E` (see
+  `internal/config/config.go`'s `resolveE2E`) - and unlike the pytest suite,
+  `.env` now genuinely reaches the tests.
 
 ## Gotchas
 

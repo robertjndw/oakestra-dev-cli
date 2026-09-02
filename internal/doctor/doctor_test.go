@@ -1,12 +1,9 @@
 package doctor
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"oak-dev/internal/config"
-	"oak-dev/internal/testsuite"
 )
 
 func TestParseMajorMinor(t *testing.T) {
@@ -25,37 +22,6 @@ func TestParseMajorMinor(t *testing.T) {
 		if major != c.wantMajor || minor != c.wantMinor {
 			t.Errorf("parseMajorMinor(%q) = %d.%d, want %d.%d", c.in, major, minor, c.wantMajor, c.wantMinor)
 		}
-	}
-}
-
-func TestCheckVenv(t *testing.T) {
-	cfg := &config.Config{RepoRoot: t.TempDir()}
-
-	if ok, detail, _ := checkVenv(cfg); ok {
-		t.Errorf("checkVenv with no .venv = ok (%s), want a failure", detail)
-	}
-
-	// The regression: `pip install -r` dying partway leaves the packages it
-	// already installed - pytest among them - behind, and doctor used to call
-	// that a healthy venv and print "all required checks passed".
-	bin := filepath.Join(cfg.RepoRoot, ".venv", "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{"activate", "pytest"} {
-		if err := os.WriteFile(filepath.Join(bin, f), nil, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if ok, detail, _ := checkVenv(cfg); ok {
-		t.Errorf("checkVenv with an unfinished install = ok (%s), want a failure", detail)
-	}
-
-	if err := os.WriteFile(testsuite.VenvStamp(cfg.RepoRoot), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if ok, detail, _ := checkVenv(cfg); !ok {
-		t.Errorf("checkVenv with a completed install = not ok (%s)", detail)
 	}
 }
 

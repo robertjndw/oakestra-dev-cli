@@ -1,26 +1,33 @@
-// Package testsuite wraps the pytest E2E suite: creating the venv (what
-// `make venv`/`make test` used to do) and running it, either in full or in
-// smoke mode (health + registration only, no deployment tests).
+// Package testsuite drives the Go E2E suite (./e2e/...) - building the
+// `go test -tags e2e` command line and holding the run lock that keeps
+// `oak-dev dev` from restarting the worker mid-run (CLAUDE.md: that would
+// mint a new node ID and strand every already-scheduled instance).
 package testsuite
 
 import (
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"oak-dev/internal/config"
 	"oak-dev/internal/proc"
 )
 
-// Suite runs the pytest E2E suite. It holds the Runner so a test can prove
-// that EnsureVenv skips the install when the stamp is present, and that the
-// stamp is only written after pip has actually succeeded.
+// smokeRun is the -run pattern smoke mode uses. TestSmokeHealth and
+// TestSmokeRegistration are the only two tests named with this prefix - see
+// e2e/doc.go, which documents the prefix as the whole smoke-mode contract.
+const smokeRun = "^TestSmoke"
+
+// Suite runs the Go E2E suite.
 type Suite struct {
 	cfg    *config.Config
 	runner proc.Runner
 }
 
-// New returns a Suite that runs python through runner.
+// New returns a Suite that runs go test through runner.
 func New(cfg *config.Config, runner proc.Runner) *Suite {
 	return &Suite{cfg: cfg, runner: runner}
 }
@@ -33,84 +40,136 @@ func LockPath(cfg *config.Config) string {
 	return filepath.Join(cfg.RepoRoot, ".generated", "test.lock")
 }
 
-// VenvStamp is the file written once tests/requirements.txt is fully
-// installed. Its presence is what "the venv is ready" means everywhere.
-//
-// Nothing python3 or pip creates is a safe substitute. `python3 -m venv`
-// writes bin/activate before a single requirement is installed, and an
-// interrupted or half-failed `pip install -r` leaves the packages it got
-// through - pytest among them - on disk. Keying off either made every later
-// run skip the install and call a broken venv finished.
-func VenvStamp(repoRoot string) string {
-	return filepath.Join(repoRoot, ".venv", ".oak-dev-requirements-installed")
-}
-
-// VenvReady reports whether .venv exists with its requirements installed.
-// doctor's venv check reads the same stamp EnsureVenv writes, so a failed
-// setup can't be reported as a healthy venv.
-func VenvReady(cfg *config.Config) bool {
-	_, err := os.Stat(VenvStamp(cfg.RepoRoot))
-	return err == nil
-}
-
-// EnsureVenv creates .venv and installs tests/requirements.txt unless that has
-// already completed, mirroring the old `make venv` target. A previous run that
-// failed partway is retried rather than inherited.
-func (s *Suite) EnsureVenv() error {
-	cfg := s.cfg
-	if VenvReady(cfg) {
-		return nil
-	}
-	venv := filepath.Join(cfg.RepoRoot, ".venv")
-	if _, err := os.Stat(filepath.Join(venv, "bin", "activate")); err != nil {
-		if err := s.run("python3", "-m", "venv", venv); err != nil {
-			return err
-		}
-	}
-	pip := filepath.Join(venv, "bin", "pip")
-	if err := s.run(pip, "install", "--quiet", "-r", "tests/requirements.txt"); err != nil {
-		return err
-	}
-	return os.WriteFile(VenvStamp(cfg.RepoRoot), nil, 0o644)
-}
-
-// Run executes the suite. smoke=true runs only health + registration tests.
-// extra is passed straight through to pytest; if it names any test paths of
-// its own, they replace the default `tests/` rather than adding to it, so
-// `oak-dev test -- tests/test_03_deployment.py` runs just that file.
+// Run executes the suite. smoke=true narrows to TestSmokeHealth and
+// TestSmokeRegistration. extra is appended after oak-dev's own flags, so a
+// user-supplied -run or -timeout wins - the test binary uses the standard
+// flag package, where the last occurrence of a repeated flag is the one that
+// takes effect.
 func (s *Suite) Run(smoke bool, extra ...string) error {
-	if err := s.EnsureVenv(); err != nil {
+	if err := rejectPytestArgs(extra); err != nil {
 		return err
 	}
-	pytest := filepath.Join(s.cfg.RepoRoot, ".venv", "bin", "pytest")
 
-	var args []string
-	if !namesPaths(extra) {
-		args = append(args, "tests/")
+	args := []string{"test", "-tags", "e2e", "./e2e/...", "-v",
+		// go test caches a successful result keyed on package files and the
+		// env vars it reads, not on network I/O. Without -count=1, a second
+		// run against a stack that has since broken can replay a stale PASS
+		// in milliseconds instead of actually talking to it.
+		"-count=1",
+		"-timeout", derivedTimeout(s.cfg).String(),
 	}
-	args = append(args, "-v")
 	if smoke {
-		args = append(args, "-m", "not deployment")
+		args = append(args, "-run", smokeRun)
 	}
 	args = append(args, extra...)
-	return s.run(pytest, args...)
+
+	// No Spec.Env: the child must inherit the process environment unchanged,
+	// or the process-env > .env precedence internal/config.LoadE2E relies on
+	// breaks for every OAK_* variable the suite reads.
+	return s.runner.Run(proc.Spec{Name: "go", Args: args, Dir: s.cfg.RepoRoot})
 }
 
-// namesPaths reports whether extra contains a positional argument (anything
-// not starting with "-"), which pytest would treat as a test path.
-func namesPaths(extra []string) bool {
-	for _, a := range extra {
-		if a != "" && !strings.HasPrefix(a, "-") {
-			return true
-		}
+// derivedTimeout sizes go test's -timeout off the configured E2E waits
+// instead of trusting its 10-minute default, which the deployment and
+// network tests alone can blow through polling worst case. Blowing -timeout
+// prints a goroutine dump for every live goroutine rather than a readable
+// test failure, so this errs generous: twice the ready wait (the suite logs
+// in and waits for an active cluster up front) plus eight deploy waits (each
+// of 03/04's steps polls to a terminal status once), rounded up to a whole
+// minute, with a 10 minute floor for when cfg.E2E is zero (e.g. a bare
+// &config.Config{} in a test).
+func derivedTimeout(cfg *config.Config) time.Duration {
+	const floor = 10 * time.Minute
+	ready, deploy := cfg.E2E.ReadyTimeout, cfg.E2E.DeployTimeout
+	if ready <= 0 {
+		ready = 180 * time.Second
 	}
-	return false
+	if deploy <= 0 {
+		deploy = 300 * time.Second
+	}
+	total := 2*ready + 8*deploy
+	if total < floor {
+		return floor
+	}
+	minute := time.Minute
+	return time.Duration(math.Ceil(float64(total)/float64(minute))) * minute
 }
 
-// run executes from the repo root: pytest.ini, tests/ and tests/requirements.txt
-// are all resolved relative to it.
-func (s *Suite) run(name string, args ...string) error {
-	return s.runner.Run(proc.Spec{Name: name, Args: args, Dir: s.cfg.RepoRoot})
+// pytestOnlyFlags have no go test equivalent at all - they'd otherwise either
+// be silently ignored or rejected by the flag package with no context on what
+// to use instead.
+var pytestOnlyFlags = map[string]bool{"-k": true, "-m": true, "--collect-only": true, "-ra": true}
+
+// rejectPytestArgs rejects passthrough args left over from the pytest suite,
+// with a teaching error rather than handing them to go test verbatim.
+//
+// A bare positional can't just be forwarded: pytest read it as a test path,
+// but go test reads a bare positional as a package pattern and fails with
+// "package tests/test_03_deployment.py is not in std" - a confusing error for
+// something that used to work.
+//
+// There is no enumerated list of go test's value-taking flags (-run, -list,
+// -bench, -timeout, -count, -cpu, -shuffle, ... - and more arrive with every
+// Go release). Enumerating them is both unnecessary and a rot hazard: a token
+// only needs classifying as "a flag's value" long enough to excuse it from
+// the bare-positional check, and that's answered generically by looking at
+// what came before it, not by knowing every flag's name.
+func rejectPytestArgs(extra []string) error {
+	var bad []string
+	prevTakesValue := false // previous token was "-flag" (no "="), so this token may be its value
+	for _, a := range extra {
+		takesValue := false
+		switch {
+		case a == "":
+			continue
+
+		// Unambiguous pytest leftovers are rejected wherever they appear -
+		// including as what looks like a flag's value - because go test can
+		// never legitimately take one. Without this, "-v tests/test_03.py"
+		// would treat the path as -v's value and let it through.
+		case strings.HasSuffix(a, ".py"), strings.HasPrefix(a, "tests/"):
+			bad = append(bad, a)
+
+		case strings.HasPrefix(a, "-"):
+			name, hasEq := a, false
+			if i := strings.IndexByte(a, '='); i >= 0 {
+				name, hasEq = a[:i], true
+			}
+			if pytestOnlyFlags[name] {
+				bad = append(bad, a)
+			}
+			takesValue = !hasEq
+
+		case !prevTakesValue:
+			// A bare positional not consumed as the preceding flag's value -
+			// go test has no positional arguments at all, so this can only be
+			// a leftover pytest test path that rules above didn't already
+			// catch (e.g. a bare directory name).
+			bad = append(bad, a)
+		}
+		prevTakesValue = takesValue
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	return fmt.Errorf(`oak-dev test runs go test now, not pytest: %s %s left over from the old suite.
+
+tests/test_01_health.py       -> -run TestSmokeHealth
+tests/test_02_registration.py -> -run TestSmokeRegistration
+tests/test_03_deployment.py   -> -run TestDeploymentLifecycle
+tests/test_04_network.py      -> -run TestOverlayNetwork
+tests/test_05_failures.py     -> -run TestFailureReporting
+-k scale                      -> -run 'TestDeploymentLifecycle/scale'
+-m "not deployment"           -> --smoke
+oak-dev test -- -list .       lists every test name`,
+		strings.Join(bad, ", "), pluralize(len(bad), "looks", "look"))
+}
+
+func pluralize(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 // IsLocked reports whether a test run is currently in progress.

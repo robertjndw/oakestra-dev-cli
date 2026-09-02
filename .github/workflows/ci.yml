@@ -27,6 +27,13 @@ jobs:
 
       - run: go vet ./...
 
+      # -run '^$' compiles and links the tagged e2e binary without running
+      # anything or needing a stack - it's the CI-side guarantee that a type
+      # error in e2e/ can't silently survive because nothing ever compiles
+      # it under the default (no -tags e2e) build.
+      - name: e2e suite compiles
+        run: go test -tags e2e -run '^$' ./e2e/...
+
       - name: gofmt
         run: |
           fmt_out="$(gofmt -l .)"
@@ -40,7 +47,7 @@ jobs:
       - run: go test ./... -race
 
   lint:
-    name: golangci-lint / ruff
+    name: golangci-lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -52,11 +59,3 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
-
-      # setup-uv has no "v9" moving major tag (its last one is v7); pin the
-      # exact release instead.
-      - uses: astral-sh/setup-uv@v9.0.0
-
-      - run: uvx ruff check tests/
-
-      - run: uvx ruff format --check tests/

@@ -52,10 +52,15 @@ is always authoritative if this drifts.
   what a generated launch config's `preLaunchTask` uses so VS Code's F5
   doesn't race the debugger starting up.
 - `oak-dev test [component] [-- args...] [--smoke] [--no-up]` - with no
-  component, runs the pytest E2E suite (starting the stack first unless
-  `--no-up`). With a Go component, runs `go test ./...` on the host, no
-  Docker, ~2s. `--smoke` limits the E2E suite to health + registration.
-  Anything after `--` passes straight through to pytest/`go test`.
+  component, runs the Go E2E suite (`go test -tags e2e ./e2e/...`), starting
+  the stack first unless `--no-up`. With a Go component, runs `go test
+  ./...` on the host, no Docker, ~2s. `--smoke` limits the E2E suite to
+  health + registration (`-run '^TestSmoke'`). Anything after `--` is
+  appended after oak-dev's own `-run`/`-timeout`/`-count` flags and passed
+  straight to `go test`, so a user-supplied `-run` or `-timeout` wins - the
+  test binary's flag package takes the last occurrence. A leftover pytest
+  argument (`-k foo`, `-m ...`, a `tests/test_0N_*.py` path) is rejected with
+  a teaching error naming the `-run` equivalent, rather than being forwarded.
   The E2E suite needs all three stacks and refuses to start under a narrowed
   scope - if it reports one, re-run as `oak-dev test --stack full`. That
   applies to `--smoke` too; only the per-component `go test` path is exempt.

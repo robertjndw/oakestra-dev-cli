@@ -42,6 +42,13 @@ var configKeys = map[string]settableKey{
 	"profiles.addons":        {path: []string{"profiles", "addons"}, kind: "bool", get: func(c *Config) string { return strconv.FormatBool(c.Profiles.Addons) }},
 	"versions.netmanager":    {path: []string{"versions", "netmanager"}, envVar: "NETMANAGER_VERSION", kind: "string", get: func(c *Config) string { return c.NetManagerVersion }},
 	"versions.lib_branch":    {path: []string{"versions", "lib_branch"}, envVar: "LIB_BRANCH", kind: "string", get: func(c *Config) string { return c.LibBranch }},
+	"e2e.root_api":           {path: []string{"e2e", "root_api"}, envVar: "OAK_ROOT_API", kind: "string", get: func(c *Config) string { return c.E2E.RootAPI }},
+	"e2e.cluster_api":        {path: []string{"e2e", "cluster_api"}, envVar: "OAK_CLUSTER_API", kind: "string", get: func(c *Config) string { return c.E2E.ClusterAPI }},
+	"e2e.root_ra":            {path: []string{"e2e", "root_ra"}, envVar: "OAK_ROOT_RA", kind: "string", get: func(c *Config) string { return c.E2E.RootRA }},
+	"e2e.username":           {path: []string{"e2e", "username"}, envVar: "OAK_USERNAME", kind: "string", get: func(c *Config) string { return c.E2E.Username }},
+	"e2e.password":           {path: []string{"e2e", "password"}, envVar: "OAK_PASSWORD", kind: "string", get: func(c *Config) string { return c.E2E.Password }},
+	"e2e.ready_timeout":      {path: []string{"e2e", "ready_timeout"}, envVar: "OAK_READY_TIMEOUT", kind: "seconds", get: func(c *Config) string { return strconv.Itoa(int(c.E2E.ReadyTimeout.Seconds())) }},
+	"e2e.deploy_timeout":     {path: []string{"e2e", "deploy_timeout"}, envVar: "OAK_DEPLOY_TIMEOUT", kind: "seconds", get: func(c *Config) string { return strconv.Itoa(int(c.E2E.DeployTimeout.Seconds())) }},
 }
 
 // ConfigKeys returns every key `oak-dev config` accepts, sorted.
@@ -135,6 +142,15 @@ func (sk settableKey) encode(value string) (tag, normalized string, err error) {
 			return "", "", fmt.Errorf("%q is not true/false", value)
 		}
 		return "!!bool", strconv.FormatBool(b), nil
+	case "seconds":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", "", fmt.Errorf("%q is not a whole number of seconds", value)
+		}
+		if n < 1 {
+			return "", "", fmt.Errorf("must be at least 1, got %d", n)
+		}
+		return "!!int", strconv.Itoa(n), nil
 	case "stack":
 		if !components.ValidScope(value) {
 			return "", "", fmt.Errorf("invalid stack scope %q, valid values: %s",

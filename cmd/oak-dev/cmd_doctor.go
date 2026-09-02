@@ -6,9 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"oak-dev/internal/config"
 	"oak-dev/internal/doctor"
-	"oak-dev/internal/proc"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -23,25 +21,15 @@ marked (optional) only gate one command, so they don't fail the run.
 
 --fix repairs what it can rather than only telling you how:
 
-  the pytest venv           created if missing (always, with or without --fix)
   proto/*_pb2.py            generated into your oakestra checkout
   the oak CLI configuration pointed at this local stack
 
-Both of those last two write outside this repo, so --fix names every file and
-setting it touches as it goes.`,
+Both of those write outside this repo, so --fix names every file and setting
+it touches as it goes.`,
 		Example: `  oak-dev doctor
   oak-dev doctor --fix`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := cfgFrom(cmd)
-
-			fmt.Println("oak-dev: ensuring the pytest venv...")
-			// Held, not swallowed: the checks below run either way (a broken
-			// venv shouldn't hide an unrelated failure), but this error is
-			// what `oak-dev doctor` exits on if nothing else does.
-			venvErr := ensureVenv(cfg)
-			if venvErr != nil {
-				fmt.Fprintln(os.Stderr, "  venv setup failed:", venvErr)
-			}
 
 			pending := 0
 			for _, f := range doctor.Fixers() {
@@ -94,29 +82,10 @@ setting it touches as it goes.`,
 			if failed > 0 {
 				return fmt.Errorf("%d required check(s) failed", failed)
 			}
-			// checkVenv already reports this (it reads the same stamp
-			// EnsureVenv writes), so reaching here with a venv error should be
-			// impossible - but "all required checks passed" must never print
-			// over a failed setup, whatever the checks happen to look at.
-			if venvErr != nil {
-				return fmt.Errorf("venv setup failed: %w", venvErr)
-			}
 			fmt.Println("\noak-dev: all required checks passed.")
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&fix, "fix", false, "repair what can be repaired automatically, then re-check")
 	return cmd
-}
-
-// ensureVenv creates the pytest venv for `oak-dev doctor`. It builds its own
-// tools rather than taking them as a parameter because doctor is the one
-// command that must keep working when the topology cannot be resolved - that
-// is the sort of thing it exists to report.
-func ensureVenv(cfg *config.Config) error {
-	tl, err := newToolsWith(cfg, proc.OS{})
-	if err != nil {
-		return err
-	}
-	return tl.tests.EnsureVenv()
 }

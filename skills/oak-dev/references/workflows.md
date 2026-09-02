@@ -6,7 +6,7 @@
 make install                         # build oak-dev onto PATH (PREFIX=~/.local/bin)
 cp .env.example .env                 # once
 cp oak-dev.yaml.example oak-dev.yaml # once - pick live: components + stack
-oak-dev doctor --fix                 # preflight + venv + protobuf stubs + oak CLI config
+oak-dev doctor --fix                 # preflight + protobuf stubs + oak CLI config
 ```
 
 ## Starting work
@@ -45,7 +45,7 @@ cluster scheduler -> MQTT -> NodeEngine -> containerd), either run the
 deployment tests or deploy by hand:
 
 ```bash
-oak-dev test -- tests/test_03_deployment.py   # the scripted version
+oak-dev test -- -run TestDeploymentLifecycle  # the scripted version
 oak application create -f fixtures/nginx.json # the manual one (JSON, not YAML)
 oak-dev status                                # clusters, nodes, instances
 oak-dev shell worker -- ctr -n oakestra containers ls   # what actually ran
@@ -96,16 +96,20 @@ status` always prints the active scope and where it came from.
 ## Single test file / single test
 
 ```bash
-oak-dev test -- tests/test_03_deployment.py
-oak-dev test -- -k test_worker_attached
+oak-dev test -- -run TestDeploymentLifecycle
+oak-dev test -- -run TestSmokeRegistration/worker_attached
 ```
 
-Test files run in a fixed, meaningful order: `test_01_health` ->
-`test_02_registration` -> `test_03_deployment` -> `test_04_network` ->
-`test_05_failures`. `test_03`/`test_04` share module-scoped fixtures and
-intentionally mutate shared state in sequence (deploy -> scale ->
-undeploy/delete), so running a narrow `-k` filter against them can behave
-differently than running the file as a whole.
+Test files are numbered in a fixed order: `01_health` -> `02_registration` ->
+`03_deployment` -> `04_network` -> `05_failures`, and each maps to one
+top-level test function (`TestSmokeHealth`, `TestSmokeRegistration`,
+`TestDeploymentLifecycle`, `TestOverlayNetwork`, `TestFailureReporting`).
+That file order is only fail-fast ergonomics, though - the ordering that
+actually matters (deploy before scale before undeploy; web before client) is
+structural, encoded as ordered subtests within the test function itself.
+Narrowing with `-run TestDeploymentLifecycle/scale` still runs the parent's
+setup (app registration) but skips the deploy subtest before it, so the scale
+step fails - the same behavior `pytest -k scale` had, not a regression.
 
 ## Debugging
 

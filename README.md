@@ -19,8 +19,7 @@ itself: installing oak-dev, and driving the OrbStack VM. See
 ## Prerequisites
 
 - Docker with Compose v2.18+ (Docker Desktop or [OrbStack](https://orbstack.dev), OrbStack recommended)
-- Go 1.24+ (builds `oak-dev` itself, plus the cross-compiled scheduler/NodeEngine binaries)
-- Python 3.10+ (for the pytest suite)
+- Go 1.24+ (builds `oak-dev` itself, the cross-compiled scheduler/NodeEngine binaries, and the E2E suite)
 - A local checkout of `oakestra` (sibling directory `../oakestra` by default)
 - Optional: the real `oak` CLI ([oakestra-cli](https://github.com/oakestra/oakestra-cli)) for `oak-dev status`, `orbctl` for the OrbStack VM path
 
@@ -32,7 +31,7 @@ itself: installing oak-dev, and driving the OrbStack VM. See
 make install                          # build oak-dev onto your PATH
 cp .env.example .env                  # once, adjust paths/values if needed
 cp oak-dev.yaml.example oak-dev.yaml  # once, pick your live: components + stack
-oak-dev doctor --fix                  # prerequisites, venv, protobuf stubs, oak CLI
+oak-dev doctor --fix                  # prerequisites, protobuf stubs, oak CLI
 oak-dev dev                           # start everything, watch for edits, stream logs
 ```
 
@@ -220,11 +219,11 @@ to the commands where scoping is the main point.
 | `oak-dev dev [component...] [--no-up] [--test smoke]` | The one command to start working: brings the stack up, merges logs from every stack in scope, and cross-compiles/restarts live Go components on save. Python services live-reload via `gunicorn --reload` already. `--test smoke` reruns the smoke suite after each rebuild. |
 | `oak-dev reload [component...] [--image] [--no-live]` | Makes an edit take effect - the mechanism depends on the component's language (see below). `--image` forces a full rebuild + recreate. Adds the component to `live:` automatically if it wasn't there; `--no-live` turns that into an error instead. |
 | `oak-dev debug <component> [--no-live] [--wait]` | Recreates the container with a debugger attached (Delve for Go, debugpy for Python) and prints the `localhost` port to attach to (matches `oak-dev vscode install`'s launch.json). `--wait` blocks until that port actually accepts connections - what a generated launch config's `preLaunchTask` uses so F5 doesn't race the debugger starting up. |
-| `oak-dev test [component] [--smoke] [--no-up] [-- args...]` | With no argument, runs the full pytest E2E suite (starts the stack unless `--no-up`). `--smoke` runs health + registration only. With a component, runs its own `go test ./...` on the host - no Docker. Anything after `--` passes straight through. |
+| `oak-dev test [component] [--smoke] [--no-up] [-- args...]` | With no argument, runs the Go end-to-end suite (`go test -tags e2e ./e2e/...`), starting the stack unless `--no-up`. `--smoke` narrows to health + registration (`-run '^TestSmoke'`). With a component, runs its own `go test ./...` on the host - no Docker. Anything after `--` is appended after oak-dev's own flags and passed straight to `go test`, so a user-supplied `-run` or `-timeout` wins. |
 | `oak-dev logs [target...] [--tail N] [--no-follow]` | Streams logs for a stack, component, container, or endpoint (see below). No target merges every stack in scope into one color-tagged stream. |
 | `oak-dev shell <target> [-- cmd...]` | Opens a shell (or runs a command) in a stack, component, container, or endpoint. Prefers bash, falls back to sh. |
 | `oak-dev status` | Answers "is Oakestra healthy" - active scope, which components run from your working tree, cluster/instance state (via the real `oak` CLI if present), a container table, and service URLs. |
-| `oak-dev doctor [--fix]` | Runs preflight checks and prints a fix for anything red. `--fix` repairs what it can: creates the pytest venv, generates protobuf stubs, points the `oak` CLI at this stack. |
+| `oak-dev doctor [--fix]` | Runs preflight checks and prints a fix for anything red. `--fix` repairs what it can: generates protobuf stubs, points the `oak` CLI at this stack. |
 | `oak-dev config`, `oak-dev config get <key>`, `oak-dev config set <key> <value>` | Reads or writes `oak-dev.yaml` settings without opening the file. `set` edits the file in place, keeping comments, and warns if `.env` or the sticky scope outranks what it just wrote. |
 | `oak-dev completion install [shell]` | Installs shell completion (bash/zsh/fish) to the right place for your shell. `completion --help` generates a script only (also covers powershell). |
 | `oak-dev skill install\|status\|uninstall [--global] [--target auto\|claude\|agents\|all]` | Installs the `skills/oak-dev` Agent Skill into `.claude/skills` and/or `.agents/skills` (see [Teaching an AI coding agent to drive oak-dev](#teaching-an-ai-coding-agent-to-drive-oak-dev)). Works from any directory - never needs `-C` or a checkout. |
@@ -257,13 +256,13 @@ container name):
 
 ## What the test suite covers
 
-| File | What it verifies |
-|---|---|
-| `tests/test_01_health.py` | system_manager and cluster_manager answer HTTP, Swagger docs are served, Admin login returns a JWT |
-| `tests/test_02_registration.py` | the cluster registers at the root and turns active, the worker attaches, aggregated cpu/memory resources reach the root |
-| `tests/test_03_deployment.py` | SLA registration, instance deployment to `RUNNING`, scale up to 2 instances, scale down to 1, undeploy, application deletion |
-| `tests/test_04_network.py` | overlay data plane: a one-shot client container wgets an nginx service via its round-robin service IP (10.30.0.0/16) and must exit 0 (`COMPLETED`) |
-| `tests/test_05_failures.py` | negative paths: a 10TB-memory request is rejected with a capacity status, an unpullable image surfaces as `FAILED` with a status detail |
+| File | Test | What it verifies |
+|---|---|---|
+| `e2e/01_health_test.go` | `TestSmokeHealth` | system_manager and cluster_manager answer HTTP, Swagger docs are served, Admin login returns a JWT |
+| `e2e/02_registration_test.go` | `TestSmokeRegistration` | the cluster registers at the root and turns active, the worker attaches, aggregated cpu/memory resources reach the root |
+| `e2e/03_deployment_test.go` | `TestDeploymentLifecycle` | SLA registration, instance deployment to `RUNNING`, scale up to 2 instances, scale down to 1, undeploy, application deletion |
+| `e2e/04_network_test.go` | `TestOverlayNetwork` | overlay data plane: a one-shot client container wgets an nginx service at a fixed round-robin service IP (`10.30.30.30`) and must exit 0 - NodeEngine only reports `COMPLETED` if the client actually ran, so this is the check that catches a client container that silently never started |
+| `e2e/05_failures_test.go` | `TestFailureReporting` | negative paths: a 10TB-memory request is rejected with a capacity status, an unpullable image surfaces as `FAILED` with a status detail |
 
 The deployment tests deploy a real nginx container inside the dockerized
 worker (via the worker's own containerd), so a green run means the entire
@@ -271,8 +270,9 @@ chain worked: REST API -> root scheduler -> cluster scheduler -> MQTT ->
 NodeEngine -> containerd.
 
 Tests poll with generous timeouts (configurable via `OAK_READY_TIMEOUT` and
-`OAK_DEPLOY_TIMEOUT` in `.env`) and fail fast when a job enters a terminal
-failure state such as `NoActiveClusterWithCapacity` or `FAILED`.
+`OAK_DEPLOY_TIMEOUT` in `.env`, which now genuinely take effect there) and
+fail fast when a job enters a terminal failure state such as
+`NoActiveClusterWithCapacity` or `FAILED`.
 
 **Never restart/recreate the worker while deployment tests run**: each new
 worker container registers a new node ID, so instances scheduled to the old
@@ -287,16 +287,16 @@ reason.
 ├── Makefile                    # `make install`, plus the vm-* targets
 ├── cmd/oak-dev/                # the CLI's cobra commands, one file per command
 ├── internal/                   # components registry, config, topology, target, doctor, build, ...
+├── internal/oakapi/            # E2E HTTP client, SLA structs, polling - untagged, unit-tested in CI
+├── e2e/                        # the Go E2E suite (`//go:build e2e`)
 ├── skills/oak-dev/             # the Agent Skill `oak-dev skill install` embeds and installs
 ├── compose/worker.yml          # dockerized worker (own compose project, shared network)
 ├── compose/override-*.yml      # macOS-specific fixes + live/debug overlays
 ├── worker/                     # DinD worker image: NodeEngine + NetManager + entrypoint
 ├── fixtures/                   # ready-to-deploy SLA JSON for `oak application create -f`
 ├── .vscode/                    # generated by `oak-dev vscode install` - gitignored, not checked in
-├── tests/                      # pytest E2E suite
 ├── oak-dev.yaml.example        # config template (copy to oak-dev.yaml)
-├── .env.example                # env config template (copy to .env)
-└── pytest.ini
+└── .env.example                # env config template (copy to .env)
 ```
 
 The orchestrator services themselves are NOT in this repo - they are built and
@@ -333,17 +333,18 @@ WORKER_VM=my-vm`.
 With the stack up:
 
 ```bash
-# Obtain a JWT
+# Obtain a JWT (jq pulls the token field out - swap in whatever JSON tool
+# you have; it's not one of oak-dev's own prerequisites)
 TOKEN=$(curl -s -X POST http://localhost:10000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"Admin","password":"Admin"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+  | jq -r .token)
 
 # Registered clusters
-curl -s http://localhost:10000/api/clusters/active | python3 -m json.tool
+curl -s http://localhost:10000/api/clusters/active | jq .
 
 # Cluster resources as seen by the root
-curl -s http://localhost:11011/api/v1/resources/ | python3 -m json.tool
+curl -s http://localhost:11011/api/v1/resources/ | jq .
 
 # Workloads running inside the worker's containerd
 oak-dev shell worker -- ctr -n oakestra containers ls

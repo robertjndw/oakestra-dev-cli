@@ -151,13 +151,18 @@ func loadConfigInto(stackFlag, repoRoot *string) func(*cobra.Command, []string) 
 			}
 			root = wd
 		}
-		root, err := filepath.Abs(root)
+		start, err := filepath.Abs(root)
 		if err != nil {
 			return err
 		}
-		if _, err := os.Stat(filepath.Join(root, "compose", "worker.yml")); err != nil {
+		// config.FindRoot is the same worktreeMarker walk-up LoadE2E uses to
+		// find .env from the E2E test binary's package-dir cwd - sharing it
+		// here means the definition of "an oakestra-dev-cli checkout" lives
+		// in exactly one place.
+		root, err = config.FindRoot(start)
+		if err != nil {
 			return fmt.Errorf("%s is not an oakestra-dev-cli checkout (no compose/worker.yml).\n"+
-				"cd there, or point at it with -C <path>", root)
+				"cd there, or point at it with -C <path>", start)
 		}
 
 		cfg, err := config.Load(root)
