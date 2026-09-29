@@ -9,6 +9,7 @@ import (
 	"oak-dev/internal/components"
 	"oak-dev/internal/config"
 	"oak-dev/internal/debugstate"
+	"oak-dev/internal/testsuite"
 )
 
 func newReloadCmd() *cobra.Command {
@@ -99,6 +100,15 @@ func reloadComponent(cfg *config.Config, tl *tools, c components.Component, imag
 		}
 		return fmt.Errorf("%s has no containers in the current scope (%s).\n"+
 			"Widen it with --stack full, or bring up the stack it lives in", c.Name, cfg.Stack)
+	}
+
+	// Same check as debug and dev. Everything below either restarts a
+	// process inside the worker or recreates it (ensureLive, --image),
+	// which gives it a new node ID.
+	for _, t := range inScope {
+		if t.Stack == components.StackWorker && testsuite.IsLocked(cfg) {
+			return fmt.Errorf("oak-dev test is running - not reloading %s (never restart/recreate the worker mid-suite)", c.Name)
+		}
 	}
 
 	if image && c.PrebuiltImage {

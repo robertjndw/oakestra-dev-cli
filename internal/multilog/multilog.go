@@ -7,6 +7,7 @@ package multilog
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -150,14 +151,20 @@ func runFunc(ctx context.Context, s Source, color string, width int, mu *sync.Mu
 	pr, pw := io.Pipe()
 
 	done := make(chan struct{})
+	var err error
 	go func() {
 		defer close(done)
-		err := s.Func(ctx, pw)
+		err = s.Func(ctx, pw)
 		_ = pw.CloseWithError(err)
 	}()
 
 	scanLines(pr, s.Tag, color, width, mu)
 	<-done
+	// scanLines drops the pipe's close error, so print it here. Otherwise a
+	// watcher that fails to start (missing source dir, out of fds) is silent.
+	if err != nil && !errors.Is(err, context.Canceled) {
+		printLine(mu, s.Tag, color, width, fmt.Sprintf("oak-dev: %v", err))
+	}
 }
 
 func scanLines(r io.Reader, tag, color string, width int, mu *sync.Mutex) {

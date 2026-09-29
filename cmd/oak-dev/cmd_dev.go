@@ -196,7 +196,11 @@ func reloadOnChange(ctx context.Context, w io.Writer, cfg *config.Config, c comp
 		return // runTagged already reported why; don't chain the smoke suite
 	}
 	if testMode == "smoke" {
-		_ = runTagged(reloadCtx, w, cfg, self, "test", "--smoke")
+		// dev has already started the stack. Without --no-up, test runs
+		// `up --build`, which rebuilds the worker image (it compiles
+		// go_node_engine) and recreates the worker with a new node ID on
+		// every save.
+		_ = runTagged(reloadCtx, w, cfg, self, "test", "--smoke", "--no-up")
 	}
 }
 
